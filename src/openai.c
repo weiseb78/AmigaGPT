@@ -238,7 +238,7 @@ static BOOL uploadRemoteFilesForMessage(
     BOOL proxyUsesSSL, BOOL proxyRequiresAuth, CONST_STRPTR proxyUsername,
     CONST_STRPTR proxyPassword, CONST_STRPTR apiKey,
     AuthorizationType authorizationType, CONST_STRPTR customHeaders,
-    APIChatEndpoint apiEndpoint);
+    CONST_STRPTR apiEndpointUrl, APIChatEndpoint apiEndpoint);
 static LONG httpParseContentLengthNullTerminated(STRPTR hdr);
 static UTF8 *extractUserFriendlyErrorMessage(UTF8 *rawMessage);
 static STRPTR combineInstructionText(CONST_STRPTR first, CONST_STRPTR second);
@@ -2590,7 +2590,7 @@ static BOOL uploadRemoteFilesForMessage(
     BOOL proxyUsesSSL, BOOL proxyRequiresAuth, CONST_STRPTR proxyUsername,
     CONST_STRPTR proxyPassword, CONST_STRPTR apiKey,
     AuthorizationType authorizationType, CONST_STRPTR customHeaders,
-    APIChatEndpoint apiEndpoint) {
+    CONST_STRPTR apiEndpointUrl, APIChatEndpoint apiEndpoint) {
     struct ChatFile *file;
     ULONG fileCount;
     ULONG fileIndex = 0;
@@ -2611,7 +2611,8 @@ static BOOL uploadRemoteFilesForMessage(
         BOOL uploaded;
         if (file->path == NULL)
             continue;
-        if (attachmentPreferInlineOverFileId(file, host, NULL, apiEndpoint))
+        if (attachmentPreferInlineOverFileId(file, host, apiEndpointUrl,
+                                             apiEndpoint))
             continue;
         fileIndex++;
         if (geminiUpload)
@@ -3989,7 +3990,7 @@ struct json_object **postChatMessageToOpenAI(
                     attachmentMessage, host, port, useSSL, useProxy, proxyHost,
                     proxyPort, proxyUsesSSL, proxyRequiresAuth, proxyUsername,
                     proxyPassword, apiKey, authorizationType, customHeaders,
-                    apiEndpoint)) {
+                    apiEndpointUrl, apiEndpoint)) {
                 clearHttpReadBuffer();
                 FreeVec(responses);
                 chatStreamInProgress = FALSE;
