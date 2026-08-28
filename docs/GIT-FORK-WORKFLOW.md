@@ -55,9 +55,12 @@ git merge upstream/master
 
 ## Beitrag zurück ins Original
 
-**Agent/Cursor:** Erstellt **keinen** Pull Request gegen `sacredbanana/AmigaGPT` — in keinem Fall.
+| Wer | PR gegen `sacredbanana/AmigaGPT` |
+| --- | --- |
+| **Agent/Cursor** | **Niemals** — auch nicht auf Nutzer-Anfrage (siehe `.cursor/rules/git-branch-policy.mdc`) |
+| **Mensch (Maintainer)** | Optional **manuell** auf GitHub: Branch auf **deinem** Fork → Upstream-`master` |
 
-Falls du manuell upstream beitragen willst: PR selbst auf GitHub eröffnen (Branch auf **deinem** Fork → `sacredbanana/AmigaGPT`). Direkten Push auf `upstream` hast du in der Regel nicht.
+Der Agent öffnet Pull Requests **ausschließlich** auf `weiseb78/AmigaGPT` (`origin`). Direkten Push auf `upstream` hast du in der Regel nicht.
 
 ## Weitere Doku
 

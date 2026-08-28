@@ -58,7 +58,9 @@ git push -u origin <branch-name>
 **Nur wenn der Nutzer ausdrücklich pushen lässt.**  
 **Nicht:** `git push origin master` (außer bewusster Maintainer-Merge nach Freigabe).
 
-Auf GitHub: **Pull Request** `feature/…` → `master` auf **eigenem Fork** (`weiseb78/AmigaGPT` / `origin`). **Kein** PR gegen `sacredbanana/AmigaGPT` — weder durch Agent noch auf Nutzer-Anfrage.
+Auf GitHub: **Pull Request** `feature/…` → `master` auf **eigenem Fork** (`weiseb78/AmigaGPT` / `origin`).
+
+**PR-Ziel (Agent):** Pull Requests **nur** auf `weiseb78/AmigaGPT` — **kein** PR gegen `sacredbanana/AmigaGPT`, auch nicht auf Nutzer-Anfrage. Upstream-PRs sind reine **Mensch/Maintainer**-Aktion (manuell auf GitHub); siehe [GIT-FORK-WORKFLOW.md](GIT-FORK-WORKFLOW.md).
 
 ---
 
