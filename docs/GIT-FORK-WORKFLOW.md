@@ -55,7 +55,9 @@ git merge upstream/master
 
 ## Beitrag zurück ins Original
 
-Auf GitHub einen **Pull Request** von einem Branch auf **deinem** Fork (`origin`) gegen `sacredbanana/AmigaGPT` öffnen. Direkten Push auf `upstream` hast du in der Regel nicht.
+**Agent/Cursor:** Erstellt **keinen** Pull Request gegen `sacredbanana/AmigaGPT` — in keinem Fall.
+
+Falls du manuell upstream beitragen willst: PR selbst auf GitHub eröffnen (Branch auf **deinem** Fork → `sacredbanana/AmigaGPT`). Direkten Push auf `upstream` hast du in der Regel nicht.
 
 ## Weitere Doku
 

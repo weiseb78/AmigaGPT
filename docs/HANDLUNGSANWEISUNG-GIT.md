@@ -58,7 +58,7 @@ git push -u origin <branch-name>
 **Nur wenn der Nutzer ausdrücklich pushen lässt.**  
 **Nicht:** `git push origin master` (außer bewusster Maintainer-Merge nach Freigabe).
 
-Auf GitHub: **Pull Request** `feature/…` → `master` (eigener Fork) oder später ggf. PR zum Upstream.
+Auf GitHub: **Pull Request** `feature/…` → `master` auf **eigenem Fork** (`weiseb78/AmigaGPT` / `origin`). **Kein** PR gegen `sacredbanana/AmigaGPT` — weder durch Agent noch auf Nutzer-Anfrage.
 
 ---
 
