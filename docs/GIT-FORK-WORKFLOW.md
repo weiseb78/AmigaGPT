@@ -55,7 +55,12 @@ git merge upstream/master
 
 ## Beitrag zurück ins Original
 
-Auf GitHub einen **Pull Request** von einem Branch auf **deinem** Fork (`origin`) gegen `sacredbanana/AmigaGPT` öffnen. Direkten Push auf `upstream` hast du in der Regel nicht.
+| Wer | PR gegen `sacredbanana/AmigaGPT` |
+| --- | --- |
+| **Agent/Cursor** | **Niemals** — auch nicht auf Nutzer-Anfrage (siehe `.cursor/rules/git-branch-policy.mdc`) |
+| **Mensch (Maintainer)** | Optional **manuell** auf GitHub: Branch auf **deinem** Fork → Upstream-`master` |
+
+Der Agent öffnet Pull Requests **ausschließlich** auf `weiseb78/AmigaGPT` (`origin`). Direkten Push auf `upstream` hast du in der Regel nicht.
 
 ## Weitere Doku
 

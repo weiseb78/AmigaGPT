@@ -27,4 +27,12 @@ alwaysApply: true
 - `origin` — weiseb78 fork (push work here)
 - `upstream` — sacredbanana/AmigaGPT (fetch only; merge into topic branches)
 
+## Pull requests (HARD — no exceptions)
+
+- **Never** open a PR against `sacredbanana/AmigaGPT` — not even if the user asks.
+- PRs **only** on **weiseb78/AmigaGPT** (`origin`): topic branch → `master`.
+- Always: `gh pr create --repo weiseb78/AmigaGPT --base master --head <branch>`.
+- Never use bare `gh pr create` without `--repo weiseb78/AmigaGPT`.
+- Never push to `upstream`.
+
 Full checklist: `docs/HANDLUNGSANWEISUNG-GIT.md`
