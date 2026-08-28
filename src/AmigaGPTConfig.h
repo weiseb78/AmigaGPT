@@ -150,6 +150,16 @@
 #define MUIA_AmigaGPTConfig_AnthropicShellToolEnabled                          \
     (AmigaGPTConfig_Dummy + 0x7A)
 
+/* Per-locked-profile code interpreter (fork: after MorphOS UI tags 0x8A-0x92) */
+#define MUIA_AmigaGPTConfig_OpenAiCodeInterpreterEnabled                       \
+    (AmigaGPTConfig_Dummy + 0x93)
+#define MUIA_AmigaGPTConfig_GeminiCodeInterpreterEnabled                       \
+    (AmigaGPTConfig_Dummy + 0x94)
+#define MUIA_AmigaGPTConfig_GrokCodeInterpreterEnabled                         \
+    (AmigaGPTConfig_Dummy + 0x95)
+#define MUIA_AmigaGPTConfig_AnthropicCodeInterpreterEnabled                    \
+    (AmigaGPTConfig_Dummy + 0x96)
+
 /* Per-locked-profile chat system prompt */
 #define MUIA_AmigaGPTConfig_OpenAiChatSystem (AmigaGPTConfig_Dummy + 0x7B)
 #define MUIA_AmigaGPTConfig_GeminiChatSystem (AmigaGPTConfig_Dummy + 0x7C)
@@ -546,6 +556,7 @@ struct ChatRequestSettings {
     STRPTR proxyPassword;
     BOOL webSearchEnabled;
     BOOL shellToolEnabled;
+    BOOL codeInterpreterEnabled;
     APIChatEndpoint apiEndpoint;
     CONST_STRPTR apiEndpointUrl;
     AuthorizationType authorizationType;

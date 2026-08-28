@@ -42,9 +42,13 @@ static void reset_node(const char *raw) {
         }
         FreeVec(block);
     }
+    if (node.content != NULL) {
+        FreeVec(node.content);
+        node.content = NULL;
+    }
     init_minlist(&codeblocks);
-    node.raw_utf8 = (UTF8 *)raw;
-    node.raw_length = (ULONG)strlen(raw);
+    node.content = (UTF8 *)AllocVec(strlen(raw) + 1, 0);
+    strcpy((char *)node.content, raw);
     node.codeblocks = &codeblocks;
 }
 

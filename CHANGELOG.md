@@ -1,5 +1,31 @@
 # Changelog
 
+## 3.2.1 (2026-08-26)
+
+- Fix follow-up chat failing with "No tool output found for function call" after the model used the shell tool (ARexx/KIT and the GUI)
+- Treat AmiKit (KIT) OpenAI proxy hosts (any URL containing "amikit") as OpenAI so file attachments, downloads and the hosted code interpreter work through the proxy
+- Fix an issue causing the app to not launch from Workbench
+
+## 3.2.0 (2026-08-24)
+
+- Attach files to the prompt with automatic file type detection
+- Download files created in the response
+- Chat profile option to enable the provider's hosted code interpreter
+- ARexx SENDMESSAGE supports CI=CODEINTERPRETER to force the hosted code interpreter on
+- ARexx SENDMESSAGE supports A=ATTACH to send one or more files with the prompt
+- ARexx SENDMESSAGE supports D=DESTINATION to download files the model returns (defaults to the current directory)
+- Upgrade AmiSSL version to 5.27
+- Recompiled with latest libnix
+- Recompiled with optimsised build of json-c
+- Recompiled with latest MorphOS SDK 3.20
+- No longer uses base relative code to prevent crahes from accidental trashing of the base register (A4)
+- Added an entry to the special thanks section
+- Installer has updated text and no longer asks where to install the locale files (forces an installation to LOCALE:)
+- Window titles no longer include a trailing ellipsis; that remains on the matching menu items only
+- Rename textedit_translate_norwegian.rexx to textedit_translate_no.rexx so the name fits FFS
+- Add show_received_file.rexx, which downloads a file from the model and opens it in MultiView (via SYS:Utilities/MultiView)
+- Installer sets the script protect bit on the bundled ARexx scripts so they can be run from the Shell without RX
+
 ## 3.1.0 (2026-08-16)
 
 - Support speech from an OpenVox server
@@ -47,7 +73,7 @@
 - Fix bug where say.rexx did not ask you what you want to say
 - Fix bug where the first paragraph in every response is always black even if you have custom colours set
 - Fix bug where a missing or incorrect API key could cause the app to enter an infinite loop of displaying an error and retrying
-- Correctly handle reponses that contain JSON in the response header such as those received from Cloudfare 
+- Correctly handle reponses that contain JSON in the response header such as those received from Cloudflare
 
 ## 2.17.0 (2025-12-22)
 

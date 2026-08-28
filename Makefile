@@ -14,11 +14,6 @@ DAEMON_OUT = $(EXECUTABLE_DIR)/$(DAEMON_NAME)_OS3
 CC = m68k-amigaos-gcc
 VASM = vasmm68k_mot
 
-LIBDIR = /opt/amiga/m68k-amigaos/lib
-SDKDIR = /opt/amiga/m68k-amigaos/sys-include
-NDKDIR = /opt/amiga/m68k-amigaos/ndk-include
-INCDIR = /opt/amiga/m68k-amigaos/include
-
 ifeq ($(OS),Darwin)
 	SED = sed -i "" 
 else
@@ -57,16 +52,25 @@ GIT_COMMIT = $(shell git rev-parse HEAD)
 GIT_TIMESTAMP = $(shell git log -1 --format=%cd --date=format:"%Y-%m-%d~%H:%M:%S")
 BUILD_DATE := $(shell date +%d.%m.%Y)
 
-CCFLAGS = -MP -MMD -m68020 -Wextra -Wno-unused-function -Wno-discarded-qualifiers -Wno-int-conversion -Wno-volatile-register-var -noixemul -fbaserel -lamiga -lm -lamisslstubs -lmui -D__AMIGAOS3__ -DGIT_BRANCH=\"$(GIT_BRANCH)\" -DGIT_COMMIT=\"$(GIT_COMMIT)\" -DGIT_TIMESTAMP=\"$(GIT_TIMESTAMP)\" -DBUILD_DATE=\"$(BUILD_DATE)\"
+# NOTE: do not add -fbaserel here. Under base-relative addressing a4 holds the
+# data base and must be re-established with __saveds in every function the OS
+# calls back into. AmigaGPT has 91 such functions (BOOPSI dispatchers and
+# SDI_hook HOOKPROTO* entries) and the m68k SDI macros do not add __saveds, so
+# they run with a foreign a4. AmigaGPT's own code is unaffected (gcc addresses
+# its globals absolutely -- zero DREL16 relocations), but every baserel library
+# call made from a hook is not: libnix's malloc alone has 35 a4-relative
+# accesses, so free()/malloc() from a dispatcher reads heap state from a wrong
+# address. That is what caused the intermittent crashes on exit.
+CCFLAGS = -MP -MMD -m68020 -Wextra -Wno-unused-function -Wno-discarded-qualifiers -Wno-int-conversion -Wno-volatile-register-var -noixemul -lamiga -lm -lamisslstubs -lmui -D__AMIGAOS3__ -DGIT_BRANCH=\"$(GIT_BRANCH)\" -DGIT_COMMIT=\"$(GIT_COMMIT)\" -DGIT_TIMESTAMP=\"$(GIT_TIMESTAMP)\" -DBUILD_DATE=\"$(BUILD_DATE)\"
 ifeq ($(DEBUG),1)
 	CCFLAGS += -DDEBUG -g -Og
 else
 	CCFLAGS += -Ofast -fomit-frame-pointer
 endif
 CPPFLAGS= $(CCFLAGS) -fno-rtti -fcoroutines -fno-use-cxa-atexit
-ASFLAGS = -Wa,-g,--register-prefix-optional,-I$(SDKDIR),-I$(NDKDIR),-I$(INCDIR),-D
-LDFLAGS =  -Wl,-Map=$(EXECUTABLE_OUT).map,-L$(LIBDIR),-lamiga,-lm,-lamisslstubs,-ljson-c,-lmui
-VASMFLAGS = -m68020 -Fhunk -opt-fconst -nowarn=62 -dwarf=3 -quiet -x -I. -D__AMIGAOS3__ -I$(INCDIR) -I$(SDKDIR) -I$(NDKDIR)
+ASFLAGS = -Wa,-g,--register-prefix-optional,-D
+LDFLAGS =  -Wl,-Map=$(EXECUTABLE_OUT).map,-lamiga,-lm,-lamisslstubs,-ljson-c,-lmagic,-lmui
+VASMFLAGS = -m68020 -Fhunk -opt-fconst -nowarn=62 -dwarf=3 -quiet -x -I. -D__AMIGAOS3__
 
 .PHONY: all clean copy_bundle_files catalog catalog_definition daemon
 

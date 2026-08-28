@@ -112,6 +112,10 @@ Object *mainWindowObject = NULL;
 Object *newChatButton;
 Object *deleteChatButton;
 Object *sendMessageButton;
+Object *attachFilesButton;
+Object *clearAttachmentsButton;
+Object *saveResponseFilesButton;
+Object *attachmentSummaryText;
 Object *stopSpeakingButton;
 Object *chatInputTextEditor;
 #ifndef __MORPHOS__
@@ -138,6 +142,8 @@ Object *modeRegisterGroup;
 STRPTR chatOutputTextEditorContents = NULL;
 static ULONG chatOutputTextEditorContentsCapacity =
     CHAT_OUTPUT_TEXT_EDITOR_CONTENTS_LENGTH;
+static struct MinList pendingChatFiles;
+static BOOL pendingChatFilesInitialized = FALSE;
 WORD pens[NUMDRIPENS + 1];
 struct Conversation *currentConversation = NULL;
 struct GeneratedImage *currentImage = NULL;
@@ -157,7 +163,9 @@ typedef enum {
 
 static ChatStreamOutcome chatStreamClassifyOutcome(UTF8 *receivedMessage);
 static void finishChatStream(ChatStreamOutcome outcome, UTF8 *receivedMessage,
-                             ULONG speechUtf8Index, BOOL isNewConversation);
+                             ULONG speechUtf8Index, BOOL isNewConversation,
+                             struct MinList *receivedFiles, BOOL requestStream);
+static void appendMessageFileSummary(struct ConversationNode *message);
 static LONG loadConversations();
 static LONG saveConversations();
 #define LAST_CONVERSATION_DIR "ENVARC:AmigaGPT"
@@ -389,6 +397,91 @@ static void installChatOutputWheelHandler(void);
 #ifdef __MORPHOS__
 static void clearChatOutputDisplay(void);
 #endif
+static void updateAttachmentControls();
+static void updateResponseFileControl();
+
+static CONST_STRPTR jsonStringValue(struct json_object *object,
+                                    CONST_STRPTR key) {
+    struct json_object *value = NULL;
+    if (object == NULL ||
+        !json_object_object_get_ex(object, key, &value) || value == NULL ||
+        json_object_is_type(value, json_type_null))
+        return NULL;
+    return json_object_get_string(value);
+}
+
+static ULONG chatFileCount(struct MinList *files) {
+    ULONG count = 0;
+    struct ChatFile *file;
+    for (file = (struct ChatFile *)files->mlh_Head;
+         file->node.mln_Succ != NULL;
+         file = (struct ChatFile *)file->node.mln_Succ)
+        count++;
+    return count;
+}
+
+static BOOL chatFilePathAlreadyPresent(struct MinList *files,
+                                       CONST_STRPTR path) {
+    struct ChatFile *file;
+    for (file = (struct ChatFile *)files->mlh_Head;
+         file->node.mln_Succ != NULL;
+         file = (struct ChatFile *)file->node.mln_Succ) {
+        if (file->path != NULL && strcmp(file->path, path) == 0)
+            return TRUE;
+    }
+    return FALSE;
+}
+
+static void updateAttachmentControls() {
+    if (!pendingChatFilesInitialized || attachmentSummaryText == NULL)
+        return;
+    ULONG count = chatFileCount(&pendingChatFiles);
+    UBYTE summary[128];
+    if (count == 0) {
+        snprintf(summary, sizeof(summary), "%s", STRING_NO_FILES_ATTACHED);
+    } else {
+        snprintf(summary, sizeof(summary), STRING_FILES_ATTACHED_FORMAT,
+                 count);
+    }
+    set(attachmentSummaryText, MUIA_Text_Contents, summary);
+    set(clearAttachmentsButton, MUIA_Disabled, count == 0);
+}
+
+static ULONG responseFileCount(struct Conversation *conversation) {
+    ULONG count = 0;
+    if (conversation == NULL)
+        return 0;
+    struct ConversationNode *message;
+    for (message =
+             (struct ConversationNode *)conversation->messages->mlh_Head;
+         message->node.mln_Succ != NULL;
+         message = (struct ConversationNode *)message->node.mln_Succ) {
+        if (strcmp(message->role, "assistant") != 0)
+            continue;
+        struct ChatFile *file;
+        for (file = (struct ChatFile *)message->files.mlh_Head;
+             file->node.mln_Succ != NULL;
+             file = (struct ChatFile *)file->node.mln_Succ) {
+            if (file->fileId != NULL || file->downloadUrl != NULL ||
+                file->path != NULL)
+                count++;
+        }
+    }
+    return count;
+}
+
+static void updateResponseFileControl() {
+    if (saveResponseFilesButton != NULL)
+        set(saveResponseFilesButton, MUIA_Disabled,
+            responseFileCount(currentConversation) == 0);
+}
+
+void freeMainWindowFileState() {
+    if (pendingChatFilesInitialized) {
+        freeChatFiles(&pendingChatFiles);
+        pendingChatFilesInitialized = FALSE;
+    }
+}
 
 /**
  * Shows the loading bar and starts the busy meter animating
@@ -736,6 +829,7 @@ HOOKPROTONHNONP(ConversationRowClickedFunc, void) {
         currentConversation = conversation;
         saveLastSelectedConversationName(currentConversation);
         displayConversation(currentConversation);
+        updateResponseFileControl();
         DoMethod(chatInputTextEditor, MUIM_GoActive);
     }
 }
@@ -787,6 +881,7 @@ HOOKPROTONHNONP(NewChatButtonClickedFunc, void) {
     codeBlocksViewerDismiss();
     refreshViewCodeBlocksMenuState();
 #endif
+    updateResponseFileControl();
     DoMethod(chatInputTextEditor, MUIM_GoActive);
 }
 MakeHook(NewChatButtonClickedHook, NewChatButtonClickedFunc);
@@ -804,9 +899,147 @@ HOOKPROTONHNONP(DeleteChatButtonClickedFunc, void) {
     codeBlocksViewerDismiss();
     refreshViewCodeBlocksMenuState();
 #endif
+    updateResponseFileControl();
     saveConversations();
 }
 MakeHook(DeleteChatButtonClickedHook, DeleteChatButtonClickedFunc);
+
+static void addPendingChatFile(CONST_STRPTR path, CONST_STRPTR name) {
+    if (path == NULL || name == NULL ||
+        chatFilePathAlreadyPresent(&pendingChatFiles, path))
+        return;
+    UTF8 *nameUTF8 = CodesetsUTF8Create(
+        CSA_SourceCodeset, (Tag)systemCodeset, CSA_Source, (Tag)name,
+        CSA_MapForeignChars, TRUE, TAG_DONE);
+    /* Work out the type now rather than when the message is sent: reading the
+     * magic database takes a moment, and here it is part of an action the user
+     * just asked for. NULL simply means no database is installed, in which case
+     * the type is guessed from the file name at send time instead. */
+    STRPTR detectedMime = detectMimeTypeFromContents(path);
+    if (!addChatFile(&pendingChatFiles, path,
+                     nameUTF8 != NULL ? nameUTF8 : (UTF8 *)name, detectedMime,
+                     NULL, NULL, NULL))
+        displayError(STRING_ERROR_MEMORY_CONVERSATION_NODE);
+    if (detectedMime != NULL)
+        FreeVec(detectedMime); /* addChatFile took its own copy */
+    if (nameUTF8 != NULL)
+        CodesetsFreeA(nameUTF8, NULL);
+}
+
+HOOKPROTONHNONP(AttachFilesButtonClickedFunc, void) {
+    struct FileRequester *fileReq =
+        AllocAslRequestTags(ASL_FileRequest, TAG_END);
+    if (fileReq == NULL)
+        return;
+    if (AslRequestTags(fileReq, ASLFR_Window, mainWindow, ASLFR_TitleText,
+                       STRING_ATTACH_FILES, ASLFR_DoMultiSelect, TRUE,
+                       ASLFR_RejectIcons, TRUE, TAG_DONE)) {
+        if (fileReq->fr_NumArgs > 0 && fileReq->fr_ArgList != NULL) {
+            for (LONG i = 0; i < fileReq->fr_NumArgs; i++) {
+                UBYTE fullPath[1024] = {0};
+                struct WBArg *argument = &fileReq->fr_ArgList[i];
+                if (NameFromLock(argument->wa_Lock, fullPath,
+                                 sizeof(fullPath))) {
+                    AddPart(fullPath, argument->wa_Name, sizeof(fullPath));
+                    addPendingChatFile(fullPath, argument->wa_Name);
+                }
+            }
+        } else if (fileReq->fr_File != NULL &&
+                   strlen(fileReq->fr_File) > 0) {
+            ULONG fullPathLength = strlen(fileReq->fr_Drawer) +
+                                   strlen(fileReq->fr_File) + 2;
+            STRPTR fullPath =
+                AllocVec(fullPathLength, MEMF_ANY | MEMF_CLEAR);
+            if (fullPath != NULL) {
+                strncpy(fullPath, fileReq->fr_Drawer,
+                        strlen(fileReq->fr_Drawer));
+                AddPart(fullPath, fileReq->fr_File, fullPathLength);
+                addPendingChatFile(fullPath, fileReq->fr_File);
+                FreeVec(fullPath);
+            }
+        }
+    }
+    FreeAslRequest(fileReq);
+    updateAttachmentControls();
+}
+MakeHook(AttachFilesButtonClickedHook, AttachFilesButtonClickedFunc);
+
+HOOKPROTONHNONP(ClearAttachmentsButtonClickedFunc, void) {
+    freeChatFiles(&pendingChatFiles);
+    updateAttachmentControls();
+}
+MakeHook(ClearAttachmentsButtonClickedHook,
+         ClearAttachmentsButtonClickedFunc);
+
+
+HOOKPROTONHNONP(SaveResponseFilesButtonClickedFunc, void) {
+    if (currentConversation == NULL ||
+        responseFileCount(currentConversation) == 0)
+        return;
+    struct FileRequester *fileReq =
+        AllocAslRequestTags(ASL_FileRequest, TAG_END);
+    if (fileReq == NULL)
+        return;
+    if (!AslRequestTags(fileReq, ASLFR_Window, mainWindow, ASLFR_TitleText,
+                        STRING_SAVE_RESPONSE_FILES, ASLFR_DrawersOnly, TRUE,
+                        ASLFR_InitialDrawer, "SYS:", TAG_DONE)) {
+        FreeAslRequest(fileReq);
+        return;
+    }
+
+    struct ChatRequestSettings chatSettings;
+    configGetActiveChatRequestSettings(&chatSettings);
+    ULONG savedCount = 0;
+    struct ConversationNode *message;
+    for (message =
+             (struct ConversationNode *)currentConversation->messages->mlh_Head;
+         message->node.mln_Succ != NULL;
+         message = (struct ConversationNode *)message->node.mln_Succ) {
+        if (strcmp(message->role, "assistant") != 0)
+            continue;
+        struct ChatFile *file;
+        for (file = (struct ChatFile *)message->files.mlh_Head;
+             file->node.mln_Succ != NULL;
+             file = (struct ChatFile *)file->node.mln_Succ) {
+            STRPTR systemName = CodesetsUTF8ToStr(
+                CSA_DestCodeset, (Tag)systemCodeset, CSA_Source,
+                (Tag)file->name, CSA_MapForeignChars, TRUE, TAG_DONE);
+            CONST_STRPTR usableName = chatFileSafeName(
+                systemName != NULL ? systemName : (STRPTR)file->name);
+            STRPTR destination =
+                uniqueChatFileDestination(fileReq->fr_Drawer, usableName);
+            if (destination == NULL) {
+                if (systemName != NULL)
+                    CodesetsFreeA(systemName, NULL);
+                continue;
+            }
+
+            if (saveChatFileToPath(
+                    file, destination, chatSettings.host, chatSettings.port,
+                    chatSettings.useSSL, chatSettings.apiKey,
+                    chatSettings.useProxy, chatSettings.proxyHost,
+                    chatSettings.proxyPort, chatSettings.proxyUsesSSL,
+                    chatSettings.proxyRequiresAuth, chatSettings.proxyUsername,
+                    chatSettings.proxyPassword, chatSettings.apiEndpointUrl,
+                    chatSettings.authorizationType,
+                    chatSettings.customHeaders) == RETURN_OK)
+                savedCount++;
+            FreeVec(destination);
+            if (systemName != NULL)
+                CodesetsFreeA(systemName, NULL);
+        }
+    }
+    FreeAslRequest(fileReq);
+    if (savedCount > 0) {
+        UBYTE statusMessage[128];
+        snprintf(statusMessage, sizeof(statusMessage),
+                 STRING_RESPONSE_FILES_SAVED_FORMAT, savedCount);
+        updateStatusBar(statusMessage, greenPen);
+        saveConversations();
+    }
+}
+MakeHook(SaveResponseFilesButtonClickedHook,
+         SaveResponseFilesButtonClickedFunc);
 
 HOOKPROTONHNONP(SendMessageButtonClickedFunc, void) {
     struct ChatRequestSettings chatSettings;
@@ -1165,8 +1398,8 @@ HOOKPROTONHNONP(CreateImageButtonClickedFunc, void) {
     CONST_STRPTR titleModel = nameSettings.model;
     if (titleModel != NULL && strlen(titleModel) > 0) {
         BOOL isImageModel = FALSE;
-        if (nameSettings.host != NULL &&
-            strcmp(nameSettings.host, "api.openai.com") == 0) {
+        if (hostIsOpenAICompatible(nameSettings.host,
+                                   nameSettings.apiEndpointUrl)) {
             isImageModel = isStringInList(titleModel, OPENAI_IMAGE_MODELS);
         } else if (nameSettings.host != NULL &&
                    strcmp(nameSettings.host,
@@ -1177,8 +1410,8 @@ HOOKPROTONHNONP(CreateImageButtonClickedFunc, void) {
             isImageModel = isStringInList(titleModel, GROK_IMAGE_MODELS);
         }
         if (isImageModel) {
-            if (nameSettings.host != NULL &&
-                strcmp(nameSettings.host, "api.openai.com") == 0) {
+            if (hostIsOpenAICompatible(nameSettings.host,
+                                       nameSettings.apiEndpointUrl)) {
                 titleModel = "gpt-5-chat-latest";
             } else if (nameSettings.host != NULL &&
                        strcmp(nameSettings.host,
@@ -1207,7 +1440,7 @@ HOOKPROTONHNONP(CreateImageButtonClickedFunc, void) {
         nameSettings.useProxy, nameSettings.proxyHost, nameSettings.proxyPort,
         nameSettings.proxyUsesSSL, nameSettings.proxyRequiresAuth,
         nameSettings.proxyUsername, nameSettings.proxyPassword, FALSE, FALSE,
-        nameSettings.apiEndpoint, nameSettings.apiEndpointUrl,
+        FALSE, nameSettings.apiEndpoint, nameSettings.apiEndpointUrl,
         nameSettings.authorizationType, nameSettings.customHeaders);
 
     struct GeneratedImage *generatedImage =
@@ -2227,6 +2460,10 @@ LONG createMainWindow() {
     streamLogBootPhase("createMainWindow start");
     streamLogLifecycle("createMainWindow start");
 
+    if (!pendingChatFilesInitialized) {
+        NewList((struct List *)&pendingChatFiles);
+        pendingChatFilesInitialized = TRUE;
+    }
     if ((isMUI5 || isMUI39) && createAmigaGPTTextEditor() == RETURN_ERROR) {
         displayError("Could not create custom class.");
     }
@@ -2396,6 +2633,24 @@ LONG createMainWindow() {
                                         newChatOutputFloattextObject(),
                                 End,
 #endif
+                            End,
+                            Child, HGroup,
+                                Child, attachFilesButton = MUI_MakeObject(MUIO_Button, STRING_ATTACH_FILES,
+                                    MUIA_CycleChain, TRUE,
+                                    MUIA_InputMode, MUIV_InputMode_RelVerify,
+                                TAG_DONE),
+                                Child, clearAttachmentsButton = MUI_MakeObject(MUIO_Button, STRING_CLEAR_ATTACHMENTS,
+                                    MUIA_CycleChain, TRUE,
+                                    MUIA_InputMode, MUIV_InputMode_RelVerify,
+                                TAG_DONE),
+                                Child, attachmentSummaryText = TextObject,
+                                    MUIA_Text_Contents, STRING_NO_FILES_ATTACHED,
+                                    MUIA_Text_SetMin, FALSE,
+                                End,
+                                Child, saveResponseFilesButton = MUI_MakeObject(MUIO_Button, STRING_SAVE_RESPONSE_FILES,
+                                    MUIA_CycleChain, TRUE,
+                                    MUIA_InputMode, MUIV_InputMode_RelVerify,
+                                TAG_DONE),
                             End,
                             Child, HGroup, MUIA_VertWeight, 20,
                                 // Chat input text editor
@@ -2598,6 +2853,8 @@ LONG createMainWindow() {
     
     set(openImageButton, MUIA_Disabled, TRUE);
     set(saveImageCopyButton, MUIA_Disabled, TRUE);
+    updateAttachmentControls();
+    updateResponseFileControl();
     
     updateStatusBar(STRING_READY, greenPen);
 
@@ -2747,6 +3004,15 @@ static void addMainWindowActions() {
     DoMethod(sendMessageButton, MUIM_Notify, MUIA_Pressed, FALSE,
              sendMessageButton, 2, MUIM_CallHook,
              &SendMessageButtonClickedHook);
+    DoMethod(attachFilesButton, MUIM_Notify, MUIA_Pressed, FALSE,
+             attachFilesButton, 2, MUIM_CallHook,
+             &AttachFilesButtonClickedHook);
+    DoMethod(clearAttachmentsButton, MUIM_Notify, MUIA_Pressed, FALSE,
+             clearAttachmentsButton, 2, MUIM_CallHook,
+             &ClearAttachmentsButtonClickedHook);
+    DoMethod(saveResponseFilesButton, MUIM_Notify, MUIA_Pressed, FALSE,
+             saveResponseFilesButton, 2, MUIM_CallHook,
+             &SaveResponseFilesButtonClickedHook);
     DoMethod(stopSpeakingButton, MUIM_Notify, MUIA_Pressed, FALSE,
              stopSpeakingButton, 2, MUIM_CallHook,
              &StopSpeakingButtonClickedHook);
@@ -2963,7 +3229,8 @@ static void flushUtf8StreamToMessage(struct UTF8StreamBuffer *stream,
 /* msgctxt "STRING_CHAT_STREAM_TRUNCATED (276//)" */
 /* msgid "Response truncated (stream buffer limit reached)." */
 
-static ChatStreamOutcome chatStreamClassifyOutcome(UTF8 *receivedMessage) {    struct ChatRequestSettings chatSettings;
+static ChatStreamOutcome chatStreamClassifyOutcome(UTF8 *receivedMessage) {
+    struct ChatRequestSettings chatSettings;
 
     if (receivedMessage == NULL || receivedMessage[0] == '\0') {
         return CHAT_STREAM_FAILED;
@@ -3002,7 +3269,8 @@ static CONST_STRPTR chatStreamOutcomeName(ChatStreamOutcome outcome) {
 }
 
 static void finishChatStream(ChatStreamOutcome outcome, UTF8 *receivedMessage,
-                             ULONG speechUtf8Index, BOOL isNewConversation) {
+                             ULONG speechUtf8Index, BOOL isNewConversation,
+                             struct MinList *receivedFiles, BOOL requestStream) {
     struct ChatRequestSettings chatSettings;
 
 #ifdef __MORPHOS__
@@ -3022,171 +3290,252 @@ static void finishChatStream(ChatStreamOutcome outcome, UTF8 *receivedMessage,
 
     configGetActiveChatRequestSettings(&chatSettings);
 
-
-    /* Handle shell tool calls - loop to handle multiple sequential commands */
-    while (chatSettings.stream && chatSettings.shellToolEnabled &&
-           hasPendingToolCall()) {
-        UTF8 *command = getPendingToolCommand();
-        STRPTR callId = getPendingToolCallId();
+    /* Resolve every unanswered function_call before the next user message. */
+    while (requestStream && hasPendingToolCall()) {
         UTF8 *responseId = getPendingResponseId();
+        UWORD pendingCount = getPendingToolCallCount();
+        STRPTR *callIds = NULL;
+        STRPTR *outputs = NULL;
+        UWORD i;
+        BOOL userDenied = FALSE;
+        BOOL denyRest = FALSE;
+        BOOL allocFailed = FALSE;
+        struct json_object *toolResponse;
+        struct json_object *error;
 
-        /* Ask user for confirmation before executing the command */
-        UBYTE confirmMsg[4096];
-        snprintf(confirmMsg, sizeof(confirmMsg),
-                 STRING_SHELL_TOOL_CONFIRMATION_BODY, command);
-        LONG result = MUI_Request(app, mainWindowObject,
-#ifdef __MORPHOS__
-                                  NULL,
-#else
-                                  MUIV_Requester_Image_Warning,
-#endif
-                                  STRING_SHELL_TOOL_CONFIRMATION_TITLE,
-                                  STRING_SHELL_TOOL_CONFIRMATION_BUTTONS,
-                                  confirmMsg, TAG_DONE);
-
-        if (result != 1) {
-            /* User denied - clear pending tool call and break out of loop */
+        if (responseId == NULL || strlen(responseId) == 0 || pendingCount == 0) {
             clearPendingToolCall();
-            strncat(chatOutputTextEditorContents,
-                    STRING_SHELL_TOOL_DENIED_BANNER,
-                    chatOutputTextEditorContentsCapacity -
-                        strlen(chatOutputTextEditorContents) - 1);
-            strncat(receivedMessage, STRING_SHELL_TOOL_DENIED_BANNER,
-                    READ_BUFFER_LENGTH - strlen(receivedMessage) - 1);
-            streamUiFlushChatDisplay();
-            break; /* Stop processing more tool calls */
+            break;
         }
 
-        /* User allowed - proceed with execution */
+        callIds = AllocVec(pendingCount * sizeof(STRPTR), MEMF_ANY | MEMF_CLEAR);
+        outputs = AllocVec(pendingCount * sizeof(STRPTR), MEMF_ANY | MEMF_CLEAR);
+        if (callIds == NULL || outputs == NULL) {
+            if (callIds != NULL)
+                FreeVec(callIds);
+            if (outputs != NULL)
+                FreeVec(outputs);
+            clearPendingToolCall();
+            break;
+        }
 
-        /* Display that we're executing a command */
-        UBYTE statusMsg[256];
-        snprintf(statusMsg, sizeof(statusMsg), STRING_EXECUTING_COMMAND);
-        updateStatusBar(statusMsg, yellowPen);
+        for (i = 0; i < pendingCount; i++) {
+            STRPTR callId = NULL;
+            STRPTR command = NULL;
+            getPendingToolCallAt(i, &callId, NULL, &command);
+            callIds[i] = callId;
 
-        /* Show the command in the chat output and save to history */
-        UBYTE cmdDisplay[512];
-        snprintf(cmdDisplay, sizeof(cmdDisplay),
-                 STRING_SHELL_TOOL_EXECUTING_BANNER_FORMAT, command);
-        strncat(chatOutputTextEditorContents, cmdDisplay,
-                chatOutputTextEditorContentsCapacity -
-                    strlen(chatOutputTextEditorContents) - 1);
-        strncat(receivedMessage, cmdDisplay,
-                READ_BUFFER_LENGTH - strlen(receivedMessage) - 1);
-        streamUiFlushChatDisplay();
+            if (denyRest) {
+                ULONG len = strlen(TOOL_CALL_OUTPUT_DENIED);
+                outputs[i] = AllocVec(len + 1, MEMF_ANY | MEMF_CLEAR);
+                if (outputs[i] != NULL)
+                    strncpy(outputs[i], TOOL_CALL_OUTPUT_DENIED, len);
+            } else if (chatSettings.shellToolEnabled && command != NULL &&
+                       strlen(command) > 0) {
+                UBYTE confirmMsg[4096];
+                LONG result;
+                snprintf(confirmMsg, sizeof(confirmMsg),
+                         STRING_SHELL_TOOL_CONFIRMATION_BODY, command);
+                result = MUI_Request(app, mainWindowObject,
+#ifdef __MORPHOS__
+                                     NULL,
+#else
+                                     MUIV_Requester_Image_Warning,
+#endif
+                                     STRING_SHELL_TOOL_CONFIRMATION_TITLE,
+                                     STRING_SHELL_TOOL_CONFIRMATION_BUTTONS,
+                                     confirmMsg, TAG_DONE);
+                if (result != 1) {
+                    ULONG len = strlen(TOOL_CALL_OUTPUT_DENIED);
+                    outputs[i] = AllocVec(len + 1, MEMF_ANY | MEMF_CLEAR);
+                    if (outputs[i] != NULL)
+                        strncpy(outputs[i], TOOL_CALL_OUTPUT_DENIED, len);
+                    userDenied = TRUE;
+                    denyRest = TRUE;
+                    strncat(chatOutputTextEditorContents,
+                            STRING_SHELL_TOOL_DENIED_BANNER,
+                            chatOutputTextEditorContentsCapacity -
+                                strlen(chatOutputTextEditorContents) - 1);
+                    strncat(receivedMessage, STRING_SHELL_TOOL_DENIED_BANNER,
+                            READ_BUFFER_LENGTH - strlen(receivedMessage) - 1);
+#ifndef __MORPHOS__
+                    set(chatOutputTextEditor, MUIA_NFloattext_Text,
+                        chatOutputTextEditorContents);
+                    set(chatOutputListView, MUIA_NList_First,
+                        MUIV_NList_First_Bottom);
+#else
+                    streamUiFlushChatDisplay();
+#endif
+                } else {
+                    LONG exitCode = 0;
+                    STRPTR output;
+                    UBYTE statusMsg[256];
+                    UBYTE cmdDisplay[512];
+                    UBYTE outputDisplay[4096];
+                    UBYTE toolOutput[8192];
+                    ULONG len;
 
-        /* Execute the shell command */
-        LONG exitCode = 0;
-        STRPTR output = executeShellCommand(command, &exitCode);
+                    snprintf(statusMsg, sizeof(statusMsg),
+                             STRING_EXECUTING_COMMAND);
+                    updateStatusBar(statusMsg, yellowPen);
+                    snprintf(cmdDisplay, sizeof(cmdDisplay),
+                             STRING_SHELL_TOOL_EXECUTING_BANNER_FORMAT, command);
+                    strncat(chatOutputTextEditorContents, cmdDisplay,
+                            chatOutputTextEditorContentsCapacity -
+                                strlen(chatOutputTextEditorContents) - 1);
+                    strncat(receivedMessage, cmdDisplay,
+                            READ_BUFFER_LENGTH - strlen(receivedMessage) - 1);
+#ifndef __MORPHOS__
+                    set(chatOutputTextEditor, MUIA_NFloattext_Text,
+                        chatOutputTextEditorContents);
+                    set(chatOutputListView, MUIA_NList_First,
+                        MUIV_NList_First_Bottom);
+#else
+                    streamUiFlushChatDisplay();
+#endif
 
-        /* Display the output and save to history */
-        UBYTE outputDisplay[4096];
-        snprintf(outputDisplay, sizeof(outputDisplay),
-                 STRING_SHELL_TOOL_OUTPUT_DISPLAY_FORMAT, exitCode,
-                 output != NULL ? output : (STRPTR)STRING_SHELL_TOOL_NO_OUTPUT);
-        strncat(chatOutputTextEditorContents, outputDisplay,
-                chatOutputTextEditorContentsCapacity -
-                    strlen(chatOutputTextEditorContents) - 1);
-        strncat(receivedMessage, outputDisplay,
-                READ_BUFFER_LENGTH - strlen(receivedMessage) - 1);
-        streamUiFlushChatDisplay();
+                    output = executeShellCommand(command, &exitCode);
+                    snprintf(outputDisplay, sizeof(outputDisplay),
+                             STRING_SHELL_TOOL_OUTPUT_DISPLAY_FORMAT, exitCode,
+                             output != NULL
+                                 ? output
+                                 : (STRPTR)STRING_SHELL_TOOL_NO_OUTPUT);
+                    strncat(chatOutputTextEditorContents, outputDisplay,
+                            chatOutputTextEditorContentsCapacity -
+                                strlen(chatOutputTextEditorContents) - 1);
+                    strncat(receivedMessage, outputDisplay,
+                            READ_BUFFER_LENGTH - strlen(receivedMessage) - 1);
+#ifndef __MORPHOS__
+                    set(chatOutputTextEditor, MUIA_NFloattext_Text,
+                        chatOutputTextEditorContents);
+                    set(chatOutputListView, MUIA_NList_First,
+                        MUIV_NList_First_Bottom);
+#else
+                    streamUiFlushChatDisplay();
+#endif
 
-        /* Build output string with exit code */
-        UBYTE toolOutput[8192];
-        snprintf(toolOutput, sizeof(toolOutput),
-                 STRING_SHELL_TOOL_TOOL_OUTPUT_FORMAT, exitCode,
-                 output != NULL ? output : (STRPTR)STRING_SHELL_TOOL_NO_OUTPUT);
+                    snprintf(toolOutput, sizeof(toolOutput),
+                             STRING_SHELL_TOOL_TOOL_OUTPUT_FORMAT, exitCode,
+                             output != NULL
+                                 ? output
+                                 : (STRPTR)STRING_SHELL_TOOL_NO_OUTPUT);
+                    len = strlen(toolOutput);
+                    outputs[i] = AllocVec(len + 1, MEMF_ANY | MEMF_CLEAR);
+                    if (outputs[i] != NULL)
+                        strncpy(outputs[i], toolOutput, len);
+                    if (output != NULL)
+                        FreeVec(output);
+                }
+            } else {
+                ULONG len = strlen(TOOL_CALL_OUTPUT_UNAVAILABLE);
+                outputs[i] = AllocVec(len + 1, MEMF_ANY | MEMF_CLEAR);
+                if (outputs[i] != NULL)
+                    strncpy(outputs[i], TOOL_CALL_OUTPUT_UNAVAILABLE, len);
+            }
+            if (outputs[i] == NULL)
+                allocFailed = TRUE;
+        }
 
-        /* Send the tool result back to the API - this may set a new pending
-         * tool call if OpenAI wants to run another command */
-        struct json_object *toolResponse = postToolResultToOpenAI(
-            responseId, callId, toolOutput, chatSettings.model,
-            chatSettings.host, chatSettings.port, chatSettings.useSSL,
-            chatSettings.apiKey, configGetProxyEnabled(),
-            chatSettings.proxyHost, chatSettings.proxyPort,
-            chatSettings.proxyUsesSSL, chatSettings.proxyRequiresAuth,
-            chatSettings.proxyUsername, chatSettings.proxyPassword,
-            chatSettings.shellToolEnabled, chatSettings.apiEndpointUrl,
+        if (allocFailed) {
+            for (i = 0; i < pendingCount; i++) {
+                if (outputs[i] != NULL)
+                    FreeVec(outputs[i]);
+            }
+            FreeVec(callIds);
+            FreeVec(outputs);
+            clearPendingToolCall();
+            break;
+        }
+
+        toolResponse = postToolResultsToOpenAI(
+            responseId, (CONST_STRPTR *)callIds, (CONST_STRPTR *)outputs,
+            pendingCount, chatSettings.model, chatSettings.host,
+            chatSettings.port, chatSettings.useSSL, chatSettings.apiKey,
+            configGetProxyEnabled(), chatSettings.proxyHost,
+            chatSettings.proxyPort, chatSettings.proxyUsesSSL,
+            chatSettings.proxyRequiresAuth, chatSettings.proxyUsername,
+            chatSettings.proxyPassword, chatSettings.shellToolEnabled,
+            chatSettings.codeInterpreterEnabled, chatSettings.apiEndpointUrl,
             chatSettings.authorizationType, chatSettings.customHeaders);
 
-        if (output != NULL) {
-            FreeVec(output);
+        for (i = 0; i < pendingCount; i++) {
+            if (outputs[i] != NULL)
+                FreeVec(outputs[i]);
         }
+        FreeVec(callIds);
+        FreeVec(outputs);
 
-        /* Get the text content from the new response */
         if (toolResponse != NULL) {
-            /* Check for errors */
-            struct json_object *error;
+            collectResponseFiles(toolResponse, receivedFiles);
             if (json_object_object_get_ex(toolResponse, "error", &error) &&
                 !json_object_is_type(error, json_type_null)) {
                 clearPendingToolCall();
                 struct json_object *message =
                     json_object_object_get(error, "message");
                 if (message != NULL) {
+                    SetIoErr(0);
                     displayError(json_object_get_string(message));
                 }
                 json_object_put(toolResponse);
-                break; /* Stop on error */
+                break;
             }
 
-            /* Each tool result creates a new response id; keep it in sync so
-             * stateful requests (e.g. auto-generated conversation title) chain
-             * from the latest response, not the pre-tool id. */
             conversationSyncLastResponseIdFromPayload(currentConversation,
                                                       toolResponse);
 
-            /* Check if there's another tool call - if so, loop will continue.
-             * postToolResultToOpenAI will have set pendingToolCall if so */
             if (hasPendingToolCall()) {
                 json_object_put(toolResponse);
                 continue;
             }
 
-            /* No more tool calls - get the final response text */
-            UTF8 *toolContentString = getMessageContentFromJson(
-                toolResponse, FALSE, FALSE, chatSettings.apiEndpoint);
-            if (toolContentString != NULL && strlen(toolContentString) > 0) {
-                /* Append to the received message */
-                strncat(receivedMessage, toolContentString,
-                        READ_BUFFER_LENGTH - strlen(receivedMessage) - 1);
+            if (!userDenied) {
+                UTF8 *toolContentString = getMessageContentFromJson(
+                    toolResponse, FALSE, FALSE, chatSettings.apiEndpoint);
+                if (toolContentString != NULL && strlen(toolContentString) > 0) {
+                    strncat(receivedMessage, toolContentString,
+                            READ_BUFFER_LENGTH - strlen(receivedMessage) - 1);
 
-                /* Display in chat output */
-                STRPTR formattedToolResponse =
-                    CodesetsUTF8ToStr(CSA_DestCodeset, (Tag)systemCodeset,
-                                      CSA_Source, (Tag)toolContentString,
-                                      CSA_MapForeignChars, TRUE, TAG_DONE);
-                if (formattedToolResponse != NULL) {
-                    strncat(chatOutputTextEditorContents, formattedToolResponse,
-                            chatOutputTextEditorContentsCapacity -
-                                strlen(chatOutputTextEditorContents) - 1);
-                    CodesetsFreeA(formattedToolResponse, NULL);
-                } else {
-                    STRPTR latin1 = utf8ToLatin1(toolContentString);
-                    if (latin1 != NULL) {
-                        strncat(chatOutputTextEditorContents, latin1,
+                    STRPTR formattedToolResponse = CodesetsUTF8ToStr(
+                        CSA_DestCodeset, (Tag)systemCodeset, CSA_Source,
+                        (Tag)toolContentString, CSA_MapForeignChars, TRUE,
+                        TAG_DONE);
+                    if (formattedToolResponse != NULL) {
+                        strncat(chatOutputTextEditorContents,
+                                formattedToolResponse,
                                 chatOutputTextEditorContentsCapacity -
                                     strlen(chatOutputTextEditorContents) - 1);
-                        FreeVec(latin1);
+                        CodesetsFreeA(formattedToolResponse, NULL);
+                    } else {
+                        STRPTR latin1 = utf8ToLatin1(toolContentString);
+                        if (latin1 != NULL) {
+                            strncat(chatOutputTextEditorContents, latin1,
+                                    chatOutputTextEditorContentsCapacity -
+                                        strlen(chatOutputTextEditorContents) - 1);
+                            FreeVec(latin1);
+                        }
                     }
-                }
 
 #ifndef __MORPHOS__
-                STRPTR formattedContent = convertMarkdownFormattingToMUI(
-                    chatOutputTextEditorContents);
-                if (formattedContent != NULL) {
-                    strncpy(chatOutputTextEditorContents, formattedContent,
-                            chatOutputTextEditorContentsCapacity - 1);
-                    FreeVec(formattedContent);
-                }
-                set(chatOutputTextEditor, MUIA_NFloattext_Text,
-                    chatOutputTextEditorContents);
-                set(chatOutputListView, MUIA_NList_First,
-                    MUIV_NList_First_Bottom);
+                    STRPTR formattedContent = convertMarkdownFormattingToMUI(
+                        chatOutputTextEditorContents);
+                    if (formattedContent != NULL) {
+                        strncpy(chatOutputTextEditorContents, formattedContent,
+                                chatOutputTextEditorContentsCapacity - 1);
+                        FreeVec(formattedContent);
+                    }
+                    set(chatOutputTextEditor, MUIA_NFloattext_Text,
+                        chatOutputTextEditorContents);
+                    set(chatOutputListView, MUIA_NList_First,
+                        MUIV_NList_First_Bottom);
 #else
-                streamUiFlushChatDisplay();
+                    streamUiFlushChatDisplay();
 #endif
+                }
             }
             json_object_put(toolResponse);
+        } else {
+            clearPendingToolCall();
+            break;
         }
     } /* end of while (tool calls) */
 
@@ -3197,8 +3546,15 @@ static void finishChatStream(ChatStreamOutcome outcome, UTF8 *receivedMessage,
         set(chatOutputTextEditor, MUIA_NFloattext_Text,
             chatOutputTextEditorContents);
 #endif
-        addTextToConversation(currentConversation, receivedMessage,
-                              "assistant");
+        struct ConversationNode *assistantMessage = addTextToConversation(
+            currentConversation, receivedMessage, "assistant");
+        if (assistantMessage != NULL)
+            moveChatFiles(&assistantMessage->files, receivedFiles);
+        else
+            freeChatFiles(receivedFiles);
+        freeChatFiles(&pendingChatFiles);
+        updateAttachmentControls();
+        updateResponseFileControl();
         displayConversation(currentConversation);
 #ifdef __MORPHOS__
         refreshViewCodeBlocksMenuState();
@@ -3234,22 +3590,19 @@ static void finishChatStream(ChatStreamOutcome outcome, UTF8 *receivedMessage,
                                   "quotes or prefix the response with anything",
                                   "user");
             setConversationSystem(currentConversation, NULL);
-            /* Do not send web search / server tools on the title request: xAI
-             * injects search tools when web search is on, and the model may
-             * return only tool calls with no assistant message text ? leaving
-             * the title empty and the row blank in the list. */
             responses = postChatMessageToOpenAI(
                 currentConversation, chatSettings.host, chatSettings.port,
                 chatSettings.useSSL, chatSettings.model, chatSettings.apiKey,
                 FALSE, chatSettings.useProxy, chatSettings.proxyHost,
                 chatSettings.proxyPort, chatSettings.proxyUsesSSL,
                 chatSettings.proxyRequiresAuth, chatSettings.proxyUsername,
-                chatSettings.proxyPassword, FALSE, FALSE,
+                chatSettings.proxyPassword, FALSE, FALSE, FALSE,
                 chatSettings.apiEndpoint, chatSettings.apiEndpointUrl,
                 chatSettings.authorizationType, chatSettings.customHeaders);
             struct Node *titleRequestNode =
                 RemTail((struct List *)currentConversation->messages);
-            FreeVec(titleRequestNode);
+            freeConversationNode(
+                (struct ConversationNode *)titleRequestNode);
             hideLoadingBar();
             if (responses == NULL) {
                 displayError(STRING_ERROR_CONNECTING_OPENAI);
@@ -3325,6 +3678,9 @@ static void finishChatStream(ChatStreamOutcome outcome, UTF8 *receivedMessage,
 static void sendChatMessage() {
     BOOL isNewConversation = FALSE;
     struct json_object **responses;
+    struct MinList receivedFiles;
+    BOOL requestStream;
+    struct ConversationNode *userMessage = NULL;
 
     streamLogLifecycle("sendChatMessage begin");
     if (currentConversation == NULL) {
@@ -3346,25 +3702,43 @@ static void sendChatMessage() {
     updateStatusBar(STRING_SENDING_MESSAGE, yellowPen);
     set(loadingBar, MUIA_Busy_Speed, MUIV_Busy_Speed_User);
     UTF8 *receivedMessage = AllocVec(READ_BUFFER_LENGTH, MEMF_ANY | MEMF_CLEAR);
+    NewList((struct List *)&receivedFiles);
     STRPTR text;
     if (isAROS) {
         get(chatInputTextEditor, MUIA_String_Contents, &text);
     } else {
         text = DoMethod(chatInputTextEditor, MUIM_TextEditor_ExportText);
     }
+    BOOL freeExportedText = !isAROS && text != NULL;
+    if (text == NULL)
+        text = (STRPTR)"";
 
-    // Remove trailing newline characters
-    while (text != NULL && text[0] != '\0' && text[strlen(text) - 1] == '\n') {
+    while (strlen(text) > 0 && text[strlen(text) - 1] == '\n')
         text[strlen(text) - 1] = '\0';
+    if (strlen(text) == 0 && chatFileCount(&pendingChatFiles) == 0) {
+        displayError(STRING_ERROR_MESSAGE_OR_ATTACHMENT_REQUIRED);
+        set(loadingBar, MUIA_Busy_Speed, MUIV_Busy_Speed_Off);
+        set(sendMessageButton, MUIA_Disabled, FALSE);
+        set(newChatButton, MUIA_Disabled, FALSE);
+        set(deleteChatButton, MUIA_Disabled, FALSE);
+        FreeVec(receivedMessage);
+        if (isNewConversation) {
+            freeConversation(currentConversation);
+            currentConversation = NULL;
+        }
+        if (freeExportedText)
+            FreeVec(text);
+        return;
     }
 
     UTF8 *textUTF8 = CodesetsUTF8Create(CSA_SourceCodeset, (Tag)systemCodeset,
-                                        CSA_Source, (Tag)text, TAG_DONE);
+                                        CSA_Source, (Tag)text,
+                                        CSA_MapForeignChars, TRUE, TAG_DONE);
 
 #ifndef __MORPHOS__
     {
         UBYTE userStyleString[] = "\033r\033b\0333";
-        UBYTE userAlignment;
+        UBYTE userAlignment = 'l';
         switch (configGetUserTextAlignment()) {
         case ALIGN_LEFT:
             userAlignment = 'l';
@@ -3403,16 +3777,62 @@ static void sendChatMessage() {
     }
 #endif
 
-    addTextToConversation(currentConversation, textUTF8, "user");
+    userMessage = addTextToConversation(
+        currentConversation, textUTF8 != NULL ? textUTF8 : (UTF8 *)"", "user");
+    if (textUTF8 != NULL)
+        CodesetsFreeA(textUTF8, NULL);
+    if (userMessage == NULL ||
+        !copyChatFiles(&userMessage->files, &pendingChatFiles)) {
+        displayError(STRING_ERROR_MEMORY_CONVERSATION_NODE);
+        set(loadingBar, MUIA_Busy_Speed, MUIV_Busy_Speed_Off);
+        set(sendMessageButton, MUIA_Disabled, FALSE);
+        set(newChatButton, MUIA_Disabled, FALSE);
+        set(deleteChatButton, MUIA_Disabled, FALSE);
+        if (userMessage != NULL) {
+            RemTail((struct List *)currentConversation->messages);
+            freeConversationNode(userMessage);
+        }
+        if (isNewConversation) {
+            freeConversation(currentConversation);
+            currentConversation = NULL;
 #ifdef __MORPHOS__
-    /* Rebuild buffer from nodes; do not append (buffer still held full history). */
+            clearChatOutputDisplay();
+#else
+            chatOutputTextEditorContents[0] = '\0';
+            set(chatOutputTextEditor, MUIA_NFloattext_Text,
+                chatOutputTextEditorContents);
+#endif
+        }
+        FreeVec(receivedMessage);
+        if (freeExportedText)
+            FreeVec(text);
+        return;
+    }
+
+#ifdef __MORPHOS__
     displayConversation(currentConversation);
 #endif
-    CodesetsFreeA(textUTF8, NULL);
 
     struct ChatRequestSettings chatSettings;
-
     configGetActiveChatRequestSettings(&chatSettings);
+
+    BOOL xaiHost = chatSettings.host != NULL &&
+                   strcmp(chatSettings.host, "api.x.ai") == 0;
+    BOOL cloudAttachmentHost =
+        (chatSettings.host != NULL &&
+         (hostIsOpenAICompatible(chatSettings.host,
+                                 chatSettings.apiEndpointUrl) ||
+          strcmp(chatSettings.host, "generativelanguage.googleapis.com") ==
+              0 ||
+          strcmp(chatSettings.host, "api.anthropic.com") == 0));
+    requestStream = chatSettings.stream;
+    if (chatFileCount(&userMessage->files) > 0) {
+        if (xaiHost)
+            requestStream = TRUE;
+        else if (cloudAttachmentHost)
+            requestStream = FALSE;
+    }
+
     setConversationSystem(currentConversation, chatSettings.chatSystem);
 
     if (isAROS) {
@@ -3439,13 +3859,13 @@ static void sendChatMessage() {
         responses = postChatMessageToOpenAI(
             currentConversation, chatSettings.host, chatSettings.port,
             chatSettings.useSSL, chatSettings.model, chatSettings.apiKey,
-            chatSettings.stream, chatSettings.useProxy, chatSettings.proxyHost,
+            requestStream, chatSettings.useProxy, chatSettings.proxyHost,
             chatSettings.proxyPort, chatSettings.proxyUsesSSL,
             chatSettings.proxyRequiresAuth, chatSettings.proxyUsername,
             chatSettings.proxyPassword, chatSettings.webSearchEnabled,
-            chatSettings.shellToolEnabled, chatSettings.apiEndpoint,
-            chatSettings.apiEndpointUrl, chatSettings.authorizationType,
-            chatSettings.customHeaders);
+            chatSettings.shellToolEnabled, chatSettings.codeInterpreterEnabled,
+            chatSettings.apiEndpoint, chatSettings.apiEndpointUrl,
+            chatSettings.authorizationType, chatSettings.customHeaders);
         if (responses == NULL) {
             streamLogLifecycle("chat send postChat returned null");
             streamLogApiError("connect", "postChatMessageToOpenAI returned NULL");
@@ -3454,11 +3874,31 @@ static void sendChatMessage() {
             set(sendMessageButton, MUIA_Disabled, FALSE);
             set(newChatButton, MUIA_Disabled, FALSE);
             set(deleteChatButton, MUIA_Disabled, FALSE);
+            struct ConversationNode *failedMessage =
+                (struct ConversationNode *)RemTail(
+                    (struct List *)currentConversation->messages);
+            freeConversationNode(failedMessage);
+            if (isNewConversation) {
+                freeConversation(currentConversation);
+                currentConversation = NULL;
+#ifdef __MORPHOS__
+                clearChatOutputDisplay();
+#else
+                chatOutputTextEditorContents[0] = '\0';
+                set(chatOutputTextEditor, MUIA_NFloattext_Text,
+                    chatOutputTextEditorContents);
+#endif
+            }
+            if (isAROS) {
+                set(chatInputTextEditor, MUIA_String_Contents, text);
+            } else {
+                set(chatInputTextEditor, MUIA_TextEditor_Contents, text);
+            }
+            freeChatFiles(&receivedFiles);
             utf8stream_free(utf8Stream);
             FreeVec(receivedMessage);
-            if (!isAROS) {
+            if (freeExportedText)
                 FreeVec(text);
-            }
 #ifdef __MORPHOS__
             morphosChatStreamRawScintillaRefresh = FALSE;
 #endif
@@ -3468,7 +3908,6 @@ static void sendChatMessage() {
         streamLogLifecycle("chat send postChat returned batch");
 
         UWORD responseIndex = 0;
-
         struct json_object *response;
         if (mainWindowIsShuttingDown()) {
             freeOpenAIResponseArray(responses);
@@ -3478,6 +3917,7 @@ static void sendChatMessage() {
         }
 
         while (response = responses[responseIndex++]) {
+            collectResponseFiles(response, &receivedFiles);
             struct json_object *error;
             if (json_object_object_get_ex(response, "error", &error) &&
                 !json_object_is_type(error, json_type_null)) {
@@ -3497,9 +3937,11 @@ static void sendChatMessage() {
                 }
                 struct Node *lastMessage =
                     RemTail((struct List *)currentConversation->messages);
-                FreeVec(lastMessage);
-                if (currentConversation ==
-                    currentConversation->messages->mlh_TailPred) {
+                freeConversationNode((struct ConversationNode *)lastMessage);
+                if (isNewConversation &&
+                    currentConversation->messages->mlh_Head->mln_Succ ==
+                        NULL) {
+                    freeConversation(currentConversation);
                     currentConversation = NULL;
 #ifdef __MORPHOS__
                     clearChatOutputDisplay();
@@ -3522,11 +3964,11 @@ static void sendChatMessage() {
                 set(newChatButton, MUIA_Disabled, FALSE);
                 set(deleteChatButton, MUIA_Disabled, FALSE);
 
+                freeChatFiles(&receivedFiles);
                 utf8stream_free(utf8Stream);
                 FreeVec(receivedMessage);
-                if (!isAROS) {
+                if (freeExportedText)
                     FreeVec(text);
-                }
 #ifdef __MORPHOS__
                 morphosChatStreamRawScintillaRefresh = FALSE;
 #endif
@@ -3539,8 +3981,8 @@ static void sendChatMessage() {
             }
 
             UTF8 *contentString = getMessageContentFromJson(
-                response, chatSettings.stream, FALSE, chatSettings.apiEndpoint);
-            if (!chatSettings.stream) {
+                response, requestStream, FALSE, chatSettings.apiEndpoint);
+            if (!requestStream) {
                 appendValidatedUtf8Chunk(utf8Stream, contentString,
                                          receivedMessage, &wordNumber,
                                          &speechUtf8Index);
@@ -3631,7 +4073,7 @@ static void sendChatMessage() {
             DoMethod(app, MUIM_Application_NewInput, &muiSig);
         }
 #endif
-        if (chatSettings.stream &&
+        if (requestStream &&
             chatSettings.apiEndpoint == API_CHAT_ENDPOINT_RESPONSES &&
             !openAIChatStreamInProgress()) {
             dataStreamFinished = TRUE;
@@ -3644,16 +4086,55 @@ static void sendChatMessage() {
 
     if (!mainWindowIsShuttingDown()) {
         streamUiFlushChatDisplay();
-        finishChatStream(chatStreamClassifyOutcome(receivedMessage), receivedMessage,
-                         speechUtf8Index, isNewConversation);
+        finishChatStream(chatStreamClassifyOutcome(receivedMessage),
+                         receivedMessage, speechUtf8Index, isNewConversation,
+                         &receivedFiles, requestStream);
+    } else {
+        freeChatFiles(&receivedFiles);
     }
 
     streamLogLifecycle("sendChatMessage end");
     FreeVec(receivedMessage);
-    if (!isAROS) {
+    if (freeExportedText)
         FreeVec(text);
-    }
 }
+
+static void appendMessageFileSummary(struct ConversationNode *message) {
+    if (message == NULL || message->files.mlh_Head->mln_Succ == NULL)
+        return;
+    CONST_STRPTR prefix = strcmp(message->role, "assistant") == 0
+                              ? STRING_RECEIVED_FILES_PREFIX
+                              : STRING_ATTACHED_FILES_PREFIX;
+    strncat(chatOutputTextEditorContents, "\n[",
+            chatOutputTextEditorContentsCapacity -
+                strlen(chatOutputTextEditorContents) - 1);
+    strncat(chatOutputTextEditorContents, prefix,
+            chatOutputTextEditorContentsCapacity -
+                strlen(chatOutputTextEditorContents) - 1);
+    struct ChatFile *file;
+    ULONG index = 0;
+    for (file = (struct ChatFile *)message->files.mlh_Head;
+         file->node.mln_Succ != NULL;
+         file = (struct ChatFile *)file->node.mln_Succ) {
+        if (index++ > 0)
+            strncat(chatOutputTextEditorContents, ", ",
+                    chatOutputTextEditorContentsCapacity -
+                        strlen(chatOutputTextEditorContents) - 1);
+        STRPTR name = CodesetsUTF8ToStr(
+            CSA_DestCodeset, (Tag)systemCodeset, CSA_Source, (Tag)file->name,
+            CSA_MapForeignChars, TRUE, TAG_DONE);
+        strncat(chatOutputTextEditorContents,
+                name != NULL ? name : (STRPTR)file->name,
+                chatOutputTextEditorContentsCapacity -
+                    strlen(chatOutputTextEditorContents) - 1);
+        if (name != NULL)
+            CodesetsFreeA(name, NULL);
+    }
+    strncat(chatOutputTextEditorContents, "]",
+            chatOutputTextEditorContentsCapacity -
+                strlen(chatOutputTextEditorContents) - 1);
+}
+
 
 /**
  * Prints the conversation to the conversation window
@@ -3682,13 +4163,19 @@ void displayConversation(struct Conversation *conversation) {
     for (conversationNode =
              (struct ConversationNode *)conversation->messages->mlh_Head;
          conversationNode->node.mln_Succ != NULL;
-         conversationNode =
+        conversationNode =
              (struct ConversationNode *)conversationNode->node.mln_Succ) {
-        UTF8 *rawEstimate = conversationNodeGetRaw(conversationNode);
         estimatedRequired +=
-            strlen((const char *)(rawEstimate != NULL ? rawEstimate : (UTF8 *)"")) *
+            strlen((const char *)(conversationNode->content != NULL
+                                              ? conversationNode->content
+                                              : (UTF8 *)"")) *
                 3 +
             512;
+        struct ChatFile *file;
+        for (file = (struct ChatFile *)conversationNode->files.mlh_Head;
+             file->node.mln_Succ != NULL;
+             file = (struct ChatFile *)file->node.mln_Succ)
+            estimatedRequired += strlen(file->name) * 3 + 8;
     }
     if (!ensureChatOutputBufferCapacity(estimatedRequired)) {
         displayError(STRING_ERROR_CONVERSATION_MAX_LENGTH_EXCEEDED);
@@ -3747,7 +4234,7 @@ void displayConversation(struct Conversation *conversation) {
                                              : (STRPTR)userRaw;
             }
             content = (UTF8 *)userContent;
-            UBYTE userAlignment;
+            UBYTE userAlignment = 'l';
             switch (configGetUserTextAlignment()) {
             case ALIGN_LEFT:
                 userAlignment = 'l';
@@ -3781,6 +4268,7 @@ void displayConversation(struct Conversation *conversation) {
                 CodesetsFreeA(userContent, NULL);
             else if (latin1Fallback != NULL)
                 FreeVec(latin1Fallback);
+            appendMessageFileSummary(conversationNode);
         } else if (strcmp(conversationNode->role, "assistant") == 0) {
             set(chatOutputListView, MUIA_NFloattext_Align,
                 configGetAssistantTextAlignment());
@@ -3796,8 +4284,10 @@ void displayConversation(struct Conversation *conversation) {
                              formattedContent);
                 FreeVec(formattedContent);
             }
-            strbufAppend(chatOutputTextEditorContents,
-                         CHAT_OUTPUT_TEXT_EDITOR_CONTENTS_LENGTH, "\n\n");
+            appendMessageFileSummary(conversationNode);
+            const UBYTE messageSeparatorStyleString[] = "\n\n";
+            strncat(chatOutputTextEditorContents, messageSeparatorStyleString,
+                    strlen(messageSeparatorStyleString));
         }
 #endif
     }
@@ -3836,8 +4326,11 @@ copyConversation(struct Conversation *conversation) {
          conversationNode->node.mln_Succ != NULL;
          conversationNode =
              (struct ConversationNode *)conversationNode->node.mln_Succ) {
-        addTextToConversation(copy, conversationNodeGetRaw(conversationNode),
-                              conversationNode->role);
+        struct ConversationNode *copiedMessage = addTextToConversation(
+            copy, conversationNodeGetRaw(conversationNode),
+            conversationNode->role);
+        if (copiedMessage != NULL)
+            copyChatFiles(&copiedMessage->files, &conversationNode->files);
     }
     if (conversation->name != NULL) {
         copy->name = dupStringAlloc(conversation->name);
@@ -3919,7 +4412,45 @@ static LONG saveConversations() {
             json_object_object_add(
                 messageJsonObject, "content",
                 json_object_new_string(
-                    conversationNodeGetRaw(conversationNode)));
+                    (CONST_STRPTR)conversationNodeGetRaw(conversationNode)));
+            struct json_object *filesJsonArray = json_object_new_array();
+            struct ChatFile *chatFile;
+            for (chatFile =
+                     (struct ChatFile *)conversationNode->files.mlh_Head;
+                 chatFile->node.mln_Succ != NULL;
+                 chatFile = (struct ChatFile *)chatFile->node.mln_Succ) {
+                struct json_object *fileJsonObject = json_object_new_object();
+                json_object_object_add(
+                    fileJsonObject, "name",
+                    json_object_new_string(chatFile->name));
+                if (chatFile->path != NULL)
+                    json_object_object_add(
+                        fileJsonObject, "path",
+                        json_object_new_string(chatFile->path));
+                if (chatFile->mimeType != NULL)
+                    json_object_object_add(
+                        fileJsonObject, "mimeType",
+                        json_object_new_string(chatFile->mimeType));
+                if (chatFile->fileId != NULL)
+                    json_object_object_add(
+                        fileJsonObject, "fileId",
+                        json_object_new_string(chatFile->fileId));
+                if (chatFile->containerId != NULL)
+                    json_object_object_add(
+                        fileJsonObject, "containerId",
+                        json_object_new_string(chatFile->containerId));
+                if (chatFile->downloadUrl != NULL)
+                    json_object_object_add(
+                        fileJsonObject, "downloadUrl",
+                        json_object_new_string(chatFile->downloadUrl));
+                json_object_array_add(filesJsonArray, fileJsonObject);
+            }
+            if (json_object_array_length(filesJsonArray) > 0) {
+                json_object_object_add(messageJsonObject, "files",
+                                       filesJsonArray);
+            } else {
+                json_object_put(filesJsonArray);
+            }
             json_object_array_add(messagesJsonArray, messageJsonObject);
         }
         json_object_object_add(conversationJsonObject, "messages",
@@ -4207,7 +4738,30 @@ static LONG loadConversations() {
                 return RETURN_ERROR;
             }
             UTF8 *content = json_object_get_string(contentJsonObject);
-            addTextToConversation(conversation, content, role);
+            struct ConversationNode *message =
+                addTextToConversation(conversation, content, role);
+            struct json_object *filesJsonArray = NULL;
+            if (message != NULL &&
+                json_object_object_get_ex(messageJsonObject, "files",
+                                          &filesJsonArray) &&
+                json_object_is_type(filesJsonArray, json_type_array)) {
+                for (ULONG k = 0;
+                     k < json_object_array_length(filesJsonArray); k++) {
+                    struct json_object *fileJsonObject =
+                        json_object_array_get_idx(filesJsonArray, k);
+                    CONST_STRPTR name =
+                        jsonStringValue(fileJsonObject, "name");
+                    if (name == NULL)
+                        continue;
+                    addChatFile(
+                        &message->files,
+                        jsonStringValue(fileJsonObject, "path"), name,
+                        jsonStringValue(fileJsonObject, "mimeType"),
+                        jsonStringValue(fileJsonObject, "fileId"),
+                        jsonStringValue(fileJsonObject, "containerId"),
+                        jsonStringValue(fileJsonObject, "downloadUrl"));
+                }
+            }
         }
         DoMethod(conversationListObject, MUIM_NList_InsertSingle, conversation,
                  MUIV_NList_Insert_Top);

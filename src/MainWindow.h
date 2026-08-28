@@ -8,6 +8,10 @@ extern Object *mainWindowObject;
 extern Object *newChatButton;
 extern Object *deleteChatButton;
 extern Object *sendMessageButton;
+extern Object *attachFilesButton;
+extern Object *clearAttachmentsButton;
+extern Object *saveResponseFilesButton;
+extern Object *attachmentSummaryText;
 extern Object *chatInputTextEditor;
 extern Object *chatOutputTextEditor;
 extern Object *chatOutputScroller;
@@ -42,6 +46,9 @@ void chatOutputWheelDisposeClass(void);
 
 /** Current chat (NULL if none). For tools like the code-block viewer. */
 struct Conversation *getCurrentConversation(void);
+
+/** Free pending attachment state owned by the main window. */
+void freeMainWindowFileState(void);
 
 /**
  * Prints the conversation to the conversation window

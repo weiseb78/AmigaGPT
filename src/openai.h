@@ -6,6 +6,8 @@
 #include <proto/dos.h>
 #include "speech.h"
 
+struct json_object;
+
 #define READ_BUFFER_LENGTH 65536
 #define TEMP_READ_BUFFER_LENGTH READ_BUFFER_LENGTH / 2
 #define WRITE_BUFFER_LENGTH 131072
@@ -45,6 +47,23 @@ void openAIChatStreamCaptureLastSse(CONST_STRPTR fromBuffer);
 #define CHAT_SYSTEM_LENGTH 512
 #define OPENAI_API_KEY_LENGTH 256
 #define MAX_PROVIDER_MODELS 32
+#define MAX_ATTACHMENT_FILE_BYTES (8UL * 1024UL * 1024UL)
+#define MAX_ATTACHMENT_TOTAL_BYTES (16UL * 1024UL * 1024UL)
+
+/**
+ * A file associated with a chat message. Local files have a path and are
+ * encoded into the next API request. Files returned by a provider have a
+ * file ID, container ID, or download URL and can be saved by the user.
+ **/
+struct ChatFile {
+    struct MinNode node;
+    STRPTR path;
+    UTF8 *name;
+    UTF8 *mimeType;
+    UTF8 *fileId;
+    UTF8 *containerId;
+    UTF8 *downloadUrl;
+};
 
 /**
  * A fenced code block extracted from assistant output (Phase 2; parser in Phase 4).
@@ -68,12 +87,15 @@ struct ConversationNode {
      **/
     UBYTE role[10];
     /**
-     * Raw message text from API / user input (UTF-8).
+     * Message text from API / user input (UTF-8).
      **/
-    UTF8 *raw_utf8;
-    ULONG raw_length;
+    UTF8 *content;
     /**
-     * Optional display string; NULL means use raw_utf8 for the chat view.
+     * Local attachments sent with this message, or files returned with it.
+     **/
+    struct MinList files;
+    /**
+     * Optional display string; NULL means use content for the chat view.
      **/
     UTF8 *display_text;
     /**
@@ -405,6 +427,8 @@ getChatModels(STRPTR host, ULONG port, BOOL useSSL, CONST_STRPTR apiKey,
  * @param proxyUsername the proxy username to use
  * @param proxyPassword the proxy password to use
  * @param webSearchEnabled whether to enable web search or not
+ * @param shellToolEnabled whether to enable the AmigaDOS shell tool
+ * @param codeInterpreterEnabled whether to enable the hosted code interpreter
  * @param apiEndpoint the API endpoint to use
  * @param apiEndpointUrl the API endpoint URL to use
  * @param authorizationType the authorization type to use
@@ -419,8 +443,9 @@ struct json_object **postChatMessageToOpenAI(
     CONST_STRPTR proxyHost, UWORD proxyPort, BOOL proxyUsesSSL,
     BOOL proxyRequiresAuth, CONST_STRPTR proxyUsername,
     CONST_STRPTR proxyPassword, BOOL webSearchEnabled, BOOL shellToolEnabled,
-    APIChatEndpoint apiEndpoint, CONST_STRPTR apiEndpointUrl,
-    AuthorizationType authorizationType, CONST_STRPTR customHeaders);
+    BOOL codeInterpreterEnabled, APIChatEndpoint apiEndpoint,
+    CONST_STRPTR apiEndpointUrl, AuthorizationType authorizationType,
+    CONST_STRPTR customHeaders);
 
 /**
  * Post a image creation request to OpenAI
@@ -466,6 +491,49 @@ ULONG downloadFile(CONST_STRPTR url, CONST_STRPTR destination, BOOL useProxy,
                    CONST_STRPTR proxyHost, UWORD proxyPort, BOOL proxyUsesSSL,
                    BOOL proxyRequiresAuth, CONST_STRPTR proxyUsername,
                    CONST_STRPTR proxyPassword);
+
+/**
+ * Download an authenticated binary file from the active provider.
+ **/
+ULONG downloadProviderFile(
+    CONST_STRPTR host, UWORD port, BOOL useSSL, CONST_STRPTR endpoint,
+    CONST_STRPTR destination, CONST_STRPTR apiKey, BOOL useProxy,
+    CONST_STRPTR proxyHost, UWORD proxyPort, BOOL proxyUsesSSL,
+    BOOL proxyRequiresAuth, CONST_STRPTR proxyUsername,
+    CONST_STRPTR proxyPassword, AuthorizationType authorizationType,
+    CONST_STRPTR customHeaders);
+
+/**
+ * Find downloadable files in a provider response and append them to files.
+ * Duplicate IDs and URLs are ignored.
+ **/
+ULONG collectResponseFiles(struct json_object *response,
+                           struct MinList *files);
+
+/**
+ * Strip directory components from a response file name so it is safe to
+ * write into a destination drawer.
+ **/
+CONST_STRPTR chatFileSafeName(CONST_STRPTR name);
+
+/**
+ * Build a path in drawer that does not yet exist. Adds -2, -3, ... before
+ * the extension when the name is already taken. Caller must FreeVec().
+ **/
+STRPTR uniqueChatFileDestination(CONST_STRPTR drawer, CONST_STRPTR filename);
+
+/**
+ * Save one received chat file to destination. Tries a local copy first,
+ * then downloadUrl, then the provider Files API. On success, file->path
+ * is updated to destination.
+ **/
+ULONG saveChatFileToPath(
+    struct ChatFile *file, CONST_STRPTR destination, CONST_STRPTR host,
+    UWORD port, BOOL useSSL, CONST_STRPTR apiKey, BOOL useProxy,
+    CONST_STRPTR proxyHost, UWORD proxyPort, BOOL proxyUsesSSL,
+    BOOL proxyRequiresAuth, CONST_STRPTR proxyUsername,
+    CONST_STRPTR proxyPassword, CONST_STRPTR apiEndpointUrl,
+    AuthorizationType authorizationType, CONST_STRPTR customHeaders);
 
 /**
  * Post a text to speech request to OpenAI
@@ -528,10 +596,29 @@ makeHttpsGetRequest(CONST_STRPTR host, UWORD port, BOOL useSSL,
                     CONST_STRPTR proxyUsername, CONST_STRPTR proxyPassword);
 
 /**
+ * function_call_output strings sent back to the API (not shown to the user)
+ **/
+#define TOOL_CALL_OUTPUT_DENIED "The user denied this command."
+#define TOOL_CALL_OUTPUT_UNAVAILABLE "This tool call could not be executed."
+
+/**
  * Check if there is a pending tool call captured during streaming
  * @return TRUE if there is a pending tool call
  **/
 BOOL hasPendingToolCall(void);
+
+/**
+ * Number of unanswered function_call items captured from the last response
+ **/
+UWORD getPendingToolCallCount(void);
+
+/**
+ * Get one captured function_call. Pointers stay valid until
+ * clearPendingToolCall() or the next capture.
+ * @return TRUE if index is valid
+ **/
+BOOL getPendingToolCallAt(UWORD index, STRPTR *callIdOut, STRPTR *nameOut,
+                          STRPTR *commandOut);
 
 /**
  * Get the pending tool call command
@@ -605,6 +692,7 @@ STRPTR executeShellCommand(UTF8 *command, LONG *exitCode);
  * @param proxyUsername the proxy username
  * @param proxyPassword the proxy password
  * @param shellToolEnabled whether the shell tool is enabled
+ * @param codeInterpreterEnabled whether the hosted code interpreter is enabled
  * @param apiEndpointUrl the API endpoint base URL (e.g. "v1")
  * @param authorizationType the authorization type to use
  * @param customHeaders custom HTTP headers to add to the request
@@ -616,8 +704,22 @@ struct json_object *postToolResultToOpenAI(
     CONST_STRPTR apiKey, BOOL useProxy, CONST_STRPTR proxyHost, UWORD proxyPort,
     BOOL proxyUsesSSL, BOOL proxyRequiresAuth, CONST_STRPTR proxyUsername,
     CONST_STRPTR proxyPassword, BOOL shellToolEnabled,
-    CONST_STRPTR apiEndpointUrl, AuthorizationType authorizationType,
-    CONST_STRPTR customHeaders);
+    BOOL codeInterpreterEnabled, CONST_STRPTR apiEndpointUrl,
+    AuthorizationType authorizationType, CONST_STRPTR customHeaders);
+
+/**
+ * Post every function_call_output for one previous response in a single
+ * request. The Responses API requires all call_ids from that response.
+ **/
+struct json_object *postToolResultsToOpenAI(
+    CONST_STRPTR previousResponseId, CONST_STRPTR *callIds,
+    CONST_STRPTR *outputs, UWORD outputCount, CONST_STRPTR model, STRPTR host,
+    UWORD port, BOOL useSSL, CONST_STRPTR apiKey, BOOL useProxy,
+    CONST_STRPTR proxyHost, UWORD proxyPort, BOOL proxyUsesSSL,
+    BOOL proxyRequiresAuth, CONST_STRPTR proxyUsername,
+    CONST_STRPTR proxyPassword, BOOL shellToolEnabled,
+    BOOL codeInterpreterEnabled, CONST_STRPTR apiEndpointUrl,
+    AuthorizationType authorizationType, CONST_STRPTR customHeaders);
 
 /**
  * Post a text to speech request to the ElevenLabs API
@@ -698,5 +800,23 @@ struct json_object *getXAICustomVoices(
     CONST_STRPTR proxyHost, UWORD proxyPort, BOOL proxyUsesSSL,
     BOOL proxyRequiresAuth, CONST_STRPTR proxyUsername,
     CONST_STRPTR proxyPassword);
+
+/**
+ * Determine an attachment's MIME type by inspecting its contents with
+ * libmagic.
+ * @param path the file to inspect
+ * @returns an AllocVec'd MIME type string the caller must FreeVec, or NULL if
+ * no magic database is available -- callers should fall back to guessing from
+ * the file name in that case
+ **/
+STRPTR detectMimeTypeFromContents(CONST_STRPTR path);
+
+/**
+ * True for api.openai.com and for AmiKit's OpenAI-compatible proxy. The proxy
+ * hostname can change; any host or endpoint URL that contains "amikit"
+ * (case-insensitive) is treated as OpenAI for Files API uploads, hosted tools
+ * and attachment handling.
+ **/
+BOOL hostIsOpenAICompatible(CONST_STRPTR host, CONST_STRPTR apiEndpointUrl);
 
 #endif
