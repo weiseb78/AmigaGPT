@@ -892,6 +892,9 @@ static CONST_STRPTR attachmentMimeType(CONST_STRPTR name) {
     if (strcasecmp(extension, ".txt") == 0 ||
         strcasecmp(extension, ".text") == 0)
         return "text/plain";
+    if (strcasecmp(extension, ".rexx") == 0 ||
+        strcasecmp(extension, ".rx") == 0)
+        return "text/plain";
     if (strcasecmp(extension, ".md") == 0)
         return "text/markdown";
     if (strcasecmp(extension, ".csv") == 0)
@@ -1051,6 +1054,39 @@ static CONST_STRPTR chatFileMime(struct ChatFile *file) {
         }
     }
     return attachmentMimeTypeForFile(file);
+}
+
+/* OpenAI Responses accepts many types inline (input_file.file_data) but rejects
+ * some filename extensions when the same bytes are referenced by file_id after
+ * a Files API upload ("context stuffing"). Amiga sources often use .rexx/.rx
+ * or no extension at all. Skip the upload for those and send inline instead. */
+static BOOL attachmentPreferInlineOverFileId(struct ChatFile *file,
+                                             CONST_STRPTR host,
+                                             CONST_STRPTR apiEndpointUrl,
+                                             APIChatEndpoint apiEndpoint) {
+    CONST_STRPTR mime;
+    CONST_STRPTR name;
+    CONST_STRPTR extension;
+
+    if (apiEndpoint != API_CHAT_ENDPOINT_RESPONSES)
+        return FALSE;
+    if (!hostIsOpenAICompatible(host, apiEndpointUrl))
+        return FALSE;
+    if (file == NULL || file->path == NULL)
+        return FALSE;
+    mime = chatFileMime(file);
+    if (strncmp(mime, "image/", 6) == 0)
+        return FALSE;
+    name = file->name;
+    if (name == NULL)
+        return attachmentFileLooksLikeText(file->path);
+    extension = strrchr(name, '.');
+    if (extension == NULL)
+        return attachmentFileLooksLikeText(file->path);
+    if (strcasecmp(extension, ".rexx") == 0 ||
+        strcasecmp(extension, ".rx") == 0)
+        return TRUE;
+    return FALSE;
 }
 
 static struct json_object *
@@ -2574,6 +2610,8 @@ static BOOL uploadRemoteFilesForMessage(
          file = (struct ChatFile *)file->node.mln_Succ) {
         BOOL uploaded;
         if (file->path == NULL)
+            continue;
+        if (attachmentPreferInlineOverFileId(file, host, NULL, apiEndpoint))
             continue;
         fileIndex++;
         if (geminiUpload)
