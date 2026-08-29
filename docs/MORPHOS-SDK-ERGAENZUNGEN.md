@@ -2,7 +2,7 @@
 
 Dokumentation der **zusätzlichen** Komponenten, die für einen nativen Cross-Build von AmigaGPT unter WSL **neben** dem BIGFOOT `morphos-sdk` nötig sind. **Kein Docker**, kein zweiter Compiler.
 
-**Stand:** 2026-05-20 · erfolgreicher Build mit `make -f Makefile.MorphOS` auf Branch `scintilla`.
+**Stand:** 2026-08-28 · libmagic (Aminet `dev/lib/magic.lha`) ergänzt für upstream 3.2 Attachments.
 
 **Nativ vs. WSL (vollständig):** [MORPHOS-SDK-NATIV-UND-WSL.md](MORPHOS-SDK-NATIV-UND-WSL.md) — MorphOS-Voll-SDK als Referenz, `devfiles.txt`-Inventar, `pack`/`sdk.pack`, Scintilla Code-Viewer (Phase 6–7b).
 
@@ -54,6 +54,7 @@ BIGFOOT installiert u. a.:
 | `fatal error: SDI_hook.h: No such file or directory` | SDI nur im Zusatz-SDK |
 | `MUIA_Aboutbox_URL undeclared` | neuere `Aboutbox_mcc.h` nur im Zusatz-SDK (`/gg` zu alt) |
 | `cannot find -ljson-c` / `-lssl` / `-lcrypto` | Link-Libs nur im Zusatz-SDK |
+| `cannot find -lmagic` | libmagic nur via Aminet-Paket (siehe unten) |
 
 ---
 
@@ -75,6 +76,7 @@ Pfad im Workspace: `~/development/morphos/AmigaSDK-gcc/morphos/sdk/`
 | Weitere MUI-MCCs | z. B. `mui/Busy_mcc.h`, `BetterString_mcc.h`, `TextEditor_mcc.h` | über `os-include` / bestehende MUI-Includes |
 | **Scintilla.mcc** | `mui/Scintilla_mcc.h`, `Scintilla/Scintilla.h` | `CodeBlocksScintilla.c`, Code-Viewer in `gui.c` — **kein** Link gegen eine Scintilla-Lib; MCC zur Laufzeit auf MorphOS |
 | **ttengine.library** | `libraries/ttengine.h` | `OpenLibrary` in `gui.c` (UTF-8-Anzeige für Scintilla) |
+| **libmagic** | `ppc-morphos/include/magic.h` | `openai.c` — MIME-Typ aus Dateiinhalt (Attachments, upstream 3.2) |
 
 **Wichtig:** Nur `os-include` und `ppc-morphos/include` aus dem Zusatz-SDK per `-I` vor `/gg` legen — **nicht** blind `sdk/include` voranstellen (sonst Konflikte z. B. bei `netdb.h` / `socket_protos.h`).
 
@@ -83,12 +85,29 @@ Pfad im Workspace: `~/development/morphos/AmigaSDK-gcc/morphos/sdk/`
 | Library | Typischer Pfad | Makefile |
 |---------|----------------|----------|
 | **libjson-c** | `ppc-morphos/lib/libjson-c.a` | `-ljson-c` |
+| **libmagic** | `ppc-morphos/lib/libnix/libmagic.a` (Multilib, `-noixemul`) | `-lmagic` |
 | **libssl** | `ppc-morphos/lib/libssl.a` | `-lssl` |
 | **libcrypto** | (mit ssl-Paket) | `-lcrypto` |
+| **libpthread** | `ppc-morphos/lib/libpthread.a` | `-lpthread` (Abhängigkeit von libmagic) |
+| **libdebug** | `ppc-morphos/lib/libdebug.a` | `-ldebug` (Fork-Debug) |
 | **libm**, **libatomic** | SDK / GCC | `-lm`, `-latomic` |
 | **GCC-Runtime** | `lib/gcc/ppc-morphos/11.2.0/` | `-L$(GCCLIBDIR)` |
 
 AmiSSL wird zur Laufzeit auf MorphOS als **Bibliothek auf dem Zielsystem** erwartet (nicht statisch vollständig ins Binary eingebettet wie ein Linux-.so); der Cross-Build linkt gegen die SDK-Stub-/Import-Libs.
+
+**libmagic** wird **statisch** gelinkt (`libmagic.a`). Zur Laufzeit braucht die App die Datenbank **`magic.mgc`** (nicht die `.a`) — AmigaGPT liefert sie im Bundle (`bundle/AmigaGPT/AmigaGPT/magic.mgc`); sie wird bei Bedarf aus `PROGDIR:`, `AMIGAGPT:` oder `C:` geladen. Ohne `magic.mgc` greift ein Extension-Fallback.
+
+Quelle: Aminet **`dev/lib/magic.lha`** (Nightfox, libmagic 5.48) — **nicht** im sacredbanana/AmigaSDK-gcc-Repo enthalten.
+
+```bash
+mkdir -p /tmp/magic-install && cd /tmp/magic-install
+curl -fsSL -o magic.lha http://aminet.net/dev/lib/magic.lha
+lha xq magic.lha
+cp -a magic/MorphOS/include/magic.h ~/development/morphos/AmigaSDK-gcc/morphos/sdk/ppc-morphos/include/
+cp -a magic/MorphOS/lib/libmagic.a magic/MorphOS/lib/libnix magic/MorphOS/lib/libb32 \
+  ~/development/morphos/AmigaSDK-gcc/morphos/sdk/ppc-morphos/lib/
+# AmigaGPT baut mit -noixemul → Linker wählt lib/libnix/libmagic.a
+```
 
 ### FlexCat (separat, nicht Teil von AmigaSDK-gcc)
 
@@ -135,6 +154,13 @@ ln -sf ~/development/morphos/flexcat/src/sd/C_c.sd ~/development/morphos/AmigaGP
 # 3) AmigaSDK-gcc
 git clone --depth 1 https://github.com/sacredbanana/AmigaSDK-gcc.git \
   ~/development/morphos/AmigaSDK-gcc
+
+# 3b) libmagic (upstream 3.2 Attachments — siehe Abschnitt Libraries)
+mkdir -p /tmp/magic-install && cd /tmp/magic-install
+curl -fsSL -o magic.lha http://aminet.net/dev/lib/magic.lha && lha xq magic.lha
+cp -a magic/MorphOS/include/magic.h ~/development/morphos/AmigaSDK-gcc/morphos/sdk/ppc-morphos/include/
+cp -a magic/MorphOS/lib/libmagic.a magic/MorphOS/lib/libnix magic/MorphOS/lib/libb32 \
+  ~/development/morphos/AmigaSDK-gcc/morphos/sdk/ppc-morphos/lib/
 
 # 4) Bauen
 cd ~/development/morphos/AmigaGPT

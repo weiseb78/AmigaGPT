@@ -54,8 +54,8 @@ struct AICodeBlock {
 struct ConversationNode {
     struct MinNode node;
     UBYTE role[10];
-    UTF8 *raw_utf8;
-    ULONG raw_length;
+    UTF8 *content;
+    struct MinList files;
     UTF8 *display_text;
     struct MinList *codeblocks;
 };

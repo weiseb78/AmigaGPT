@@ -141,13 +141,37 @@ void mainWindowSignalQuit(void);
 BOOL mainWindowIsShuttingDown(void);
 
 /**
+ * Extract a human-readable API error string from a JSON error payload.
+ * Handles both {"error":{"message":"..."}} and {"error":"..."}.
+ * The returned pointer is owned by the json object; do not FreeVec it.
+ **/
+UTF8 *getApiErrorMessageFromJson(struct json_object *json);
+
+/**
  * Add a block of text to the conversation list
  * @param conversation The conversation to add the text to
  * @param text The text to add to the conversation
  * @param role The role of the text (user or assistant)
  **/
-void addTextToConversation(struct Conversation *conversation, UTF8 *text,
-                           STRPTR role);
+struct ConversationNode *addTextToConversation(struct Conversation *conversation,
+                                               UTF8 *text, STRPTR role);
+
+/** Add a file record to a chat-file list. All non-NULL strings are copied. */
+BOOL addChatFile(struct MinList *files, CONST_STRPTR path, CONST_STRPTR name,
+                 CONST_STRPTR mimeType, CONST_STRPTR fileId,
+                 CONST_STRPTR containerId, CONST_STRPTR downloadUrl);
+
+/** Copy all file records from one initialized list to another. */
+BOOL copyChatFiles(struct MinList *destination, struct MinList *source);
+
+/** Move all file records from one initialized list to another. */
+void moveChatFiles(struct MinList *destination, struct MinList *source);
+
+/** Free every file record in an initialized list. */
+void freeChatFiles(struct MinList *files);
+
+/** Free a detached conversation message and all of its owned data. */
+void freeConversationNode(struct ConversationNode *conversationNode);
 
 /**
  * Rebuild name_list_display from conversation->name (UTF-8) for NList/MUI.

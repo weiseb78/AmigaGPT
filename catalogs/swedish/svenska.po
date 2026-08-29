@@ -945,10 +945,10 @@ msgstr "Det gick inte att hämta gränssnittet för amisslmaster.library"
 #: src/openai.c:223
 msgctxt "STRING_ERROR_AMISSLMASTER_LIB_INIT (155//)"
 msgid ""
-"Failed to initialize amisslmaster.library. AmigaGPT requires AmiSSL 5.18 or "
+"Failed to initialize amisslmaster.library. AmigaGPT requires AmiSSL 5.27 or "
 "newer. Please refer to the documentation for more information."
 msgstr ""
-"Det gick inte att initiera amisslmaster.library. AmigaGPT kräver AmiSSL 5.18 "
+"Det gick inte att initiera amisslmaster.library. AmigaGPT kräver AmiSSL 5.27 "
 "eller senare. Se dokumentationen för mer information."
 
 #: src/openai.c:233
@@ -1917,6 +1917,118 @@ msgstr "Tal är inte tillgängligt. Talenheten kunde inte initieras."
 msgctxt "STRING_ERROR_REXX_SPEAK_FAILED (403//)"
 msgid "SPEAKTEXT failed. See the error requester for details."
 msgstr "SPEAKTEXT misslyckades. Se felfönstret för detaljer."
+
+#: src/MainWindow.c
+msgctxt "STRING_ATTACH_FILES (365//)"
+msgid "Attach files..."
+msgstr "Attach files..."
+
+#: src/MainWindow.c
+msgctxt "STRING_CLEAR_ATTACHMENTS (366//)"
+msgid "Clear"
+msgstr "Clear"
+
+#: src/MainWindow.c
+msgctxt "STRING_NO_FILES_ATTACHED (367//)"
+msgid "No files attached"
+msgstr "No files attached"
+
+#: src/MainWindow.c
+msgctxt "STRING_FILES_ATTACHED_FORMAT (368//)"
+msgid "%lu file(s) attached"
+msgstr "%lu file(s) attached"
+
+#: src/MainWindow.c
+msgctxt "STRING_SAVE_RESPONSE_FILES (369//)"
+msgid "Save received files..."
+msgstr "Save received files..."
+
+#: src/MainWindow.c
+msgctxt "STRING_RESPONSE_FILES_SAVED_FORMAT (370//)"
+msgid "%lu received file(s) saved"
+msgstr "%lu received file(s) saved"
+
+#: src/MainWindow.c
+msgctxt "STRING_ATTACHED_FILES_PREFIX (371//)"
+msgid "Attached files: "
+msgstr "Attached files: "
+
+#: src/MainWindow.c
+msgctxt "STRING_RECEIVED_FILES_PREFIX (372//)"
+msgid "Received files: "
+msgstr "Received files: "
+
+#: src/MainWindow.c
+msgctxt "STRING_ERROR_MESSAGE_OR_ATTACHMENT_REQUIRED (373//)"
+msgid "Enter a message or attach at least one file."
+msgstr "Enter a message or attach at least one file."
+
+#: src/openai.c
+msgctxt "STRING_ERROR_ATTACHMENT_FILE_NOT_FOUND (374//)"
+msgid "An attached file could not be found or opened."
+msgstr "An attached file could not be found or opened."
+
+#: src/openai.c
+msgctxt "STRING_ERROR_ATTACHMENT_TOO_LARGE (375//)"
+msgid "Attachments are limited to 8 MB per file and 16 MB per request."
+msgstr "Attachments are limited to 8 MB per file and 16 MB per request."
+
+#: src/openai.c
+msgctxt "STRING_ERROR_ATTACHMENT_ENCODE (376//)"
+msgid "Could not encode an attached file."
+msgstr "Could not encode an attached file."
+
+#: src/openai.c
+msgctxt "STRING_ERROR_RECEIVED_FILE_DOWNLOAD (377//)"
+msgid "Could not download a file returned by the LLM."
+msgstr "Could not download a file returned by the LLM."
+
+#: src/openai.c
+msgctxt "STRING_ENCODING_ATTACHMENT_FORMAT (378//)"
+msgid "Encoding attachment %lu of %lu..."
+msgstr "Encoding attachment %lu of %lu..."
+
+#: src/openai.c
+msgctxt "STRING_PREPARING_REQUEST (379//)"
+msgid "Preparing request..."
+msgstr "Preparing request..."
+
+#: src/openai.c
+msgctxt "STRING_UPLOADING_REQUEST_FORMAT (380//)"
+msgid "Uploading request: %lu%%"
+msgstr "Uploading request: %lu%%"
+
+#: src/openai.c
+msgctxt "STRING_WAITING_FOR_RESPONSE (381//)"
+msgid "Upload complete. Waiting for response..."
+msgstr "Upload complete. Waiting for response..."
+
+#: src/CustomServerSettingsRequesterWindow.c
+msgctxt "STRING_CODE_INTERPRETER (382//)"
+msgid "Code Interpreter"
+msgstr "Kodtolk"
+
+#: src/AboutAmigaGPTWindow.c:111
+#, fuzzy
+msgctxt "STRING_ABOUT_WINDOW_OBLIGEMENT (383//)"
+msgid ""
+"for covering AmigaGPT for the french Amiga community and interviewing me"
+msgstr "för att ha granskat AmigaGPT och intervjuat mig i nummer 14"
+
+#: src/CustomServerSettingsRequesterWindow.c
+msgctxt "STRING_CHAT_PROVIDER_SETTINGS_TITLE (384//)"
+msgid "Chat Provider Settings"
+msgstr "Inställningar för chattleverantör"
+
+#: src/CustomServerSettingsRequesterWindow.c
+msgctxt "STRING_IMAGE_PROVIDER_SETTINGS_TITLE (385//)"
+msgid "Image Provider Settings"
+msgstr "Inställningar för bildleverantör"
+
+#: src/SpeechProviderSettingsRequesterWindow.c
+msgctxt "STRING_SPEECH_PROVIDER_SETTINGS_TITLE (386//)"
+msgid "Speech Provider Settings"
+msgstr "Inställningar för talprovider"
 
 #~ msgctxt "STRING_MENU_OPENAI_VOICE (133//)"
 #~ msgid "OpenAI Voice"

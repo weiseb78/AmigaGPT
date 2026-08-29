@@ -152,7 +152,7 @@ static ULONG format_codeblock_placeholder(UBYTE *buf, ULONG buf_len,
 }
 
 /**
- * If codeblocks is non-empty, set display_text to raw_utf8 with each fenced
+ * If codeblocks is non-empty, set display_text to content with each fenced
  * region replaced by a short UTF-8 placeholder (Phase 5.1 chat vs. code).
  * Otherwise display_text stays NULL (use raw in UI).
  */
@@ -169,7 +169,9 @@ static void conversationNodeBuildDisplayOmittingCode(
     ULONG tail_len;
     ULONG block_index;
 
-    if (node == NULL || node->raw_utf8 == NULL || node->codeblocks == NULL) {
+    ULONG raw_len;
+
+    if (node == NULL || node->content == NULL || node->codeblocks == NULL) {
         return;
     }
 
@@ -177,12 +179,13 @@ static void conversationNodeBuildDisplayOmittingCode(
         return;
     }
 
-    raw = (const UBYTE *)node->raw_utf8;
-    if (node->raw_length == 0) {
+    raw = (const UBYTE *)node->content;
+    raw_len = (ULONG)strlen((const char *)raw);
+    if (raw_len == 0) {
         return;
     }
-    end = raw + node->raw_length;
-    out_cap = node->raw_length + 256;
+    end = raw + raw_len;
+    out_cap = raw_len + 256;
     out = AllocVec(out_cap, MEMF_CLEAR);
     if (out == NULL) {
         return;
@@ -316,7 +319,9 @@ void conversationNodeParseCodeFences(struct Conversation *conv,
     ULONG index_offset;
     ULONG block_index;
 
-    if (node == NULL || node->raw_utf8 == NULL || node->codeblocks == NULL) {
+    ULONG raw_len;
+
+    if (node == NULL || node->content == NULL || node->codeblocks == NULL) {
         return;
     }
 
@@ -330,11 +335,12 @@ void conversationNodeParseCodeFences(struct Conversation *conv,
     index_offset = conversation_codeblock_offset(conv, node);
     block_index = index_offset;
 
-    raw = (const UBYTE *)node->raw_utf8;
-    if (node->raw_length == 0) {
+    raw = (const UBYTE *)node->content;
+    raw_len = (ULONG)strlen((const char *)raw);
+    if (raw_len == 0) {
         return;
     }
-    end = raw + node->raw_length;
+    end = raw + raw_len;
     p = raw;
 
     while (p < end) {

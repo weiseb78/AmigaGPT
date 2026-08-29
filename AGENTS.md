@@ -11,8 +11,9 @@ This repository is **weiseb78/AmigaGPT** — a fork of [sacredbanana/AmigaGPT](h
 - For OpenAI questions, prefer the project MCP server `openaiDeveloperDocs` and the project skill `openai-docs`.
 - For xAI questions, prefer the project MCP server `xaiDocs` and the project skill `xai-docs`.
 - For AmigaOS 3, AmigaOS 4.1, MorphOS, SDK, NDK, autodoc, include, or example-code questions, prefer the project skill `amiga-sdk-docs`.
-- For `amiga-sdk-docs`, sync and search the local cache at `.cursor/cache/amigasdk-gcc` before broader web search.
+- For `amiga-sdk-docs`, sync and search the local cache at `.agents/skills/amiga-sdk-docs/cache/amigasdk-gcc` (via `./.agents/skills/amiga-sdk-docs/scripts/sync-repo.sh`) before broader web search.
 - For `amiga-sdk-docs`, wait for the sync script to finish successfully or fail before any fallback to GitHub pages or broader web search.
+- Building AmigaGPT itself on Amiga targets: use the `build-amigagpt` skill — only the three `build_*.sh` scripts work in that environment. **MorphOS fork (WSL):** use `bash ship-morphos.sh` / `make -f Makefile.MorphOS ship` (see Build & test loop below).
 - Before calling an MCP tool, read the installed tool descriptor and follow its schema exactly.
 - For documentation answers, prefer MCP-backed official docs over general web search.
 - If MCP is unavailable, fall back only to official provider docs pages:
