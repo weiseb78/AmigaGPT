@@ -78,7 +78,7 @@ Vollständige Tabelle: [MORPHOS-SDK-ERGAENZUNGEN.md](MORPHOS-SDK-ERGAENZUNGEN.md
 |---|------------|--------|
 | 1 | BIGFOOT `morphos-sdk.deb` → `/gg` | `ppc-morphos-gcc`, Basis-SDK |
 | 2 | FlexCat (`morphos/flexcat`) | Katalog `AmigaGPT_cat.c` / `.h` |
-| 3 | `AmigaSDK-gcc/morphos/sdk` | SDI, json-c, AmiSSL, neuere MCC-Header, `Scintilla_mcc.h`, … |
+| 3 | `AmigaSDK-gcc/morphos/sdk` | SDI, json-c, OpenSSL-Header/Stubs (`libssl_shared` → openssl3.library), neuere MCC-Header, `Scintilla_mcc.h`, … |
 
 `Makefile.MorphOS` setzt `AMIGA_SDK_EXTRA` auf (3), wenn `SDI_hook.h` dort existiert.
 

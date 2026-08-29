@@ -11,8 +11,10 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-STAGE="${PACKAGE_STAGE:-$ROOT/out/package-morphos}"
-ARCHIVE_BASE="${PACKAGE_ARCHIVE:-$ROOT/out/AmigaGPT-MorphOS-cross}"
+OUT_DIR="${AMIGAGPT_OUT_DIR:-$ROOT/out}"
+CATALOGS_DIR="${AMIGAGPT_CATALOGS_DIR:-$ROOT/catalogs}"
+STAGE="${PACKAGE_STAGE:-$OUT_DIR/package-morphos}"
+ARCHIVE_BASE="${PACKAGE_ARCHIVE:-$OUT_DIR/AmigaGPT-MorphOS-cross}"
 DEPLOY_WIN="${MORPHOS_DEPLOY:-Z:/morphos/out-crosscompile}"
 BUILD="${BUILD:-1}"
 # shellcheck source=tools/flexcat-env.sh
@@ -31,32 +33,34 @@ file_md5() {
 
 if [[ "$BUILD" == "1" ]]; then
   log "Building AmigaGPT + daemon…"
-  make -C "$ROOT" -f Makefile.MorphOS
-  make -C "$ROOT" -f Makefile.MorphOS daemon
+  MAKE_OUT=()
+  [[ "$OUT_DIR" != "$ROOT/out" ]] && MAKE_OUT=(EXECUTABLE_DIR="$OUT_DIR")
+  make -C "$ROOT" -f Makefile.MorphOS "${MAKE_OUT[@]}"
+  make -C "$ROOT" -f Makefile.MorphOS daemon "${MAKE_OUT[@]}"
 fi
 
 for bin in AmigaGPT_MorphOS AmigaGPTD_MorphOS; do
-  [[ -f "$ROOT/out/$bin" ]] || { echo "Missing out/$bin" >&2; exit 1; }
+  [[ -f "$OUT_DIR/$bin" ]] || { echo "Missing $OUT_DIR/$bin" >&2; exit 1; }
 done
 
 log "Staging: $STAGE"
 rm -rf "$STAGE"
 mkdir -p "$STAGE/AmigaGPT/AmigaGPT" "$STAGE/catalogs"
 
-cp -f "$ROOT/out/AmigaGPT_MorphOS" "$ROOT/out/AmigaGPTD_MorphOS" "$STAGE/AmigaGPT/AmigaGPT/"
+cp -f "$OUT_DIR/AmigaGPT_MorphOS" "$OUT_DIR/AmigaGPTD_MorphOS" "$STAGE/AmigaGPT/AmigaGPT/"
 if [[ -f "$ROOT/bundle/AmigaGPT/AmigaGPT/AmigaGPT_MorphOS.info" ]]; then
   cp -f "$ROOT/bundle/AmigaGPT/AmigaGPT/AmigaGPT_MorphOS.info" "$STAGE/AmigaGPT/AmigaGPT/"
-elif [[ -f "$ROOT/out/AmigaGPT_MorphOS.info" ]]; then
-  cp -f "$ROOT/out/AmigaGPT_MorphOS.info" "$STAGE/AmigaGPT/AmigaGPT/"
+elif [[ -f "$OUT_DIR/AmigaGPT_MorphOS.info" ]]; then
+  cp -f "$OUT_DIR/AmigaGPT_MorphOS.info" "$STAGE/AmigaGPT/AmigaGPT/"
 fi
 
 if [[ -d "$ROOT/bundle/AmigaGPT/AmigaGPT/rexx" ]]; then
   cp -a "$ROOT/bundle/AmigaGPT/AmigaGPT/rexx" "$ROOT/bundle/AmigaGPT/AmigaGPT/devs" "$STAGE/AmigaGPT/AmigaGPT/"
-elif [[ -d "$ROOT/out/rexx" ]]; then
-  cp -a "$ROOT/out/rexx" "$ROOT/out/devs" "$STAGE/AmigaGPT/AmigaGPT/"
+elif [[ -d "$OUT_DIR/rexx" ]]; then
+  cp -a "$OUT_DIR/rexx" "$OUT_DIR/devs" "$STAGE/AmigaGPT/AmigaGPT/"
 fi
 
-for cat in "$ROOT"/catalogs/*/*.catalog; do
+for cat in "$CATALOGS_DIR"/*/*.catalog; do
   [[ -f "$cat" ]] || continue
   lang=$(basename "$(dirname "$cat")")
   mkdir -p "$STAGE/catalogs/$lang"
@@ -154,7 +158,7 @@ Share: DEPLOY-HISTORY.txt = letzte 10 erfolgreiche Z:-Deploys (WSL).
 
 Kataloge: catalogs/<sprache>/AmigaGPT.catalog → LOCALE:Catalogs/<sprache>/
 
-Laufzeit: MUI, AmiSSL 5.x, codesets.library, guigfx, TCP/IP
+Laufzeit: MUI, openssl3.library (MorphOS 3.16+), codesets.library, guigfx, TCP/IP
 Code-Viewer (Phase 6): Scintilla.mcc (MUI-Classes), ttengine.library (UTF-8/FreeType)
 EOF
 

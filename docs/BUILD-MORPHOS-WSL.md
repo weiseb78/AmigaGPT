@@ -282,7 +282,7 @@ CLEAN=1 ./build_morphos.sh
 | `SDI_hook.h: No such file` | [AmigaSDK-gcc](https://github.com/sacredbanana/AmigaSDK-gcc) installieren |
 | `cannot open … C_h.sd` | Symlinks zu `flexcat/src/sd/C_*.sd` im AmigaGPT-Root (siehe Abschnitt 5) |
 | SDK unter `/gg`, Build sucht `/opt/amiga` | Symlinks aus Abschnitt 3 anlegen |
-| `cannot find -ljson-c` / `-lssl` | [AmigaSDK-gcc](https://github.com/sacredbanana/AmigaSDK-gcc) nachinstallieren |
+| `cannot find -ljson-c` / `-lssl_shared` | [AmigaSDK-gcc](https://github.com/sacredbanana/AmigaSDK-gcc) nachinstallieren; MorphOS TLS: `-lssl_shared` → `openssl3.library` |
 | Linker sucht falsche GCC-Version | `GCCLIBDIR` in `Makefile.MorphOS` anpassen |
 | Katalog-Fehler bei AmigaGPT | `which flexcat`; PATH auf `bin_unix/flexcat` setzen |
 | Sehr langsamer Build auf `/mnt/c` | Nur `~/development/morphos/AmigaGPT` nutzen |

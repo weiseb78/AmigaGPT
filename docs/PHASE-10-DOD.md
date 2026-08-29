@@ -133,6 +133,7 @@ Aus [STREAM-RECOVERY.md](STREAM-RECOVERY.md#testplan-morphos) + Phase-7/9-Tests:
 | R4.1 | Fence-Heuristik EOF (optional) | [STREAM-RECOVERY.md](STREAM-RECOVERY.md) R4 |
 | R4.3 | Fence Host-Tests | **Erledigt** — `tools/test-codefence.sh` |
 | **13** | Worker / UI-Batching | Nur bei Stream-Freeze trotz R3 — [STREAM-RECOVERY.md](STREAM-RECOVERY.md) |
+| **CB-SCR** | Code-Viewer: horizontaler Scrollbalken, Thumb winzig bei wenig Text (Scroll-Breite/Offset nach `SETTEXT`?) | MorphOS, `gui.c` Scrollgroup + `CodeBlocksScintilla.c`; HW 2026-08-29; **optional**, nicht Blocker |
 
 **Erledigt seit v0.1:** Phase **11** (Code-Viewer Lexer), Phase **12** + **12.1** (Chat-Scintilla, Midi-Markdown) — nicht mehr in dieser DoD-Checkliste.
 

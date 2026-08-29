@@ -3193,16 +3193,18 @@ LONG initOpenAIConnector() {
         displayError(STRING_ERROR_BSDSOCKET_LIB_OPEN);
         return RETURN_ERROR;
     }
-#elif defined(__AMIGAOS4__)
+#elif defined(__AMIGAOS4__) || defined(__MORPHOS__)
     if ((SocketBase = OpenLibrary("bsdsocket.library", 4)) == NULL) {
         displayError(STRING_ERROR_BSDSOCKET_LIB_OPEN_OS4);
         return RETURN_ERROR;
     }
+#if defined(__AMIGAOS4__)
     if ((ISocket = (struct SocketIFace *)GetInterface(SocketBase, "main", 1,
                                                       NULL)) == NULL) {
         displayError(STRING_ERROR_BSDSOCKET_INTERFACE_OPEN);
         return RETURN_ERROR;
     }
+#endif
 #endif
 
 #ifdef __AMIGAOS3__
@@ -7533,6 +7535,13 @@ void closeOpenAIConnector() {
 #ifdef __AMIGAOS4__
         DropInterface((struct Interface *)ISocket);
 #endif
+        CloseLibrary(SocketBase);
+        SocketBase = NULL;
+    }
+#endif
+
+#if defined(__MORPHOS__)
+    if (SocketBase) {
         CloseLibrary(SocketBase);
         SocketBase = NULL;
     }
