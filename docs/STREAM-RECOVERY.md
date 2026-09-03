@@ -287,4 +287,18 @@ Details: [PHASE-8-STRING-SAFETY.md](PHASE-8-STRING-SAFETY.md#recovery-r2--rest-b
 
 ---
 
-*Stand: 2026-05-28 — R1–R3 + R2 erledigt; Phasen 8–12 erledigt; R4 optional; Phase 13 zurückgestellt.*
+---
+
+## Fix: Falsches „Response incomplete" (2026-09, Build 8851)
+
+**Problem:** Nach vollständiger Antwort zeigte die UI „Response incomplete (connection ended early).", obwohl der Text komplett war.
+
+**Ursache:** `chatStreamCompletedOk` wurde erst **nach** `chatStreamFinalizeTransport()` gesetzt. Die Finalisierung klassifizierte den Stream daher als PARTIAL.
+
+**Fix (`openai.c`):** `chatStreamCompletedOk = TRUE` wird jetzt gesetzt, sobald `response.completed` (echt oder synthetisiert) erkannt wird — **vor** dem Aufruf von `chatStreamFinalizeTransport()`. Damit stimmt die Outcome-Klassifikation mit dem tatsächlichen Stream-Ergebnis überein.
+
+**Bezug:** R2.4 (`chatStreamClassifyOutcome`) — die Transport-Ebene lieferte korrekt „done", aber das OK-Flag kam zu spät.
+
+---
+
+*Stand: 2026-09-03 — R1–R3 + R2 erledigt; Response-incomplete-Fix (Build 8851); Phasen 8–12 erledigt; R4 optional; Phase 13 zurückgestellt.*

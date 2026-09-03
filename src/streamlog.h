@@ -16,6 +16,9 @@
 
 void streamLogSyncFromConfig(void);
 
+/** Apply debug flags directly (used during loadConfig before configObj exists). */
+void streamLogSyncFromFlags(BOOL debugStreamLog, BOOL debugLifecycleLog);
+
 BOOL streamLogIsEnabled(void);
 
 void streamLogChatEnd(CONST_STRPTR outcome, ULONG messageLen,

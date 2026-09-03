@@ -52,6 +52,14 @@ Basis upstream: **2.17.0** (Dezember 2025). Nur **MorphOS** in diesem Block voll
 - **`T:amigagpt_shutdown.last`** — letzte Shutdown-Phase (eine Zeile, RAM).
 - **`T:amigagpt_startup.last`** — letzte Startup-Phase bei blockiertem Start (eine Zeile, RAM).
 
+### Netzwerk & TLS (Build 8851)
+
+- **OpenSSL 3 shared:** Statisches Linken durch `openssl3.library` (shared) ersetzt — kleineres Binary, systemweite Updates.
+- **`bsdsocket.library`:** Wird beim Start explizit geöffnet; DNS und TCP nutzen die MorphOS-Socket-API korrekt.
+- **Connect-Retries mit MUI-Pump:** Zwischen Verbindungsversuchen wird die MUI-Event-Loop bedient — reduziert UI-Freeze bei langsamer Verbindung.
+- **Stream-Ergebnis:** `response.completed`-Flag wird vor Transport-Finalisierung gesetzt — kein falsches „Response incomplete" bei vollständigen Antworten.
+- **Debug-Logging ab Startup:** `debugStreamLog` / `debugLifecycleLog` aus `config.json` greifen jetzt schon vor vollständiger Config-Initialisierung (`streamLogSyncFromFlags`).
+
 ### Bewusst zurückgestellt
 
 - **Phase 13** (Worker/UI-Batching) — nur bei erneuten Freezes unter Last.

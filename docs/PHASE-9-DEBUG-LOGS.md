@@ -28,6 +28,8 @@ In `ENVARC:AmigaGPT/config.json` (Fallback beim ersten Start: `AMIGAGPT:config.j
 
 Nach Änderung App neu starten. Lifecycle-Zeilen beginnen **nach** `readConfig()` (nicht `startup begin` davor).
 
+**Hinweis (MorphOS, Fix 8846+):** `streamLogSyncFromConfig()` wird zusätzlich direkt nach `NewObject(MUIC_AmigaGPTConfig)` aufgerufen — vorher blieben Logs aus, wenn die Flags nur in `loadConfig()` synchronisiert wurden, während `configObj` noch `NULL` war.
+
 ## Dateien
 
 | Pfad | Inhalt |
