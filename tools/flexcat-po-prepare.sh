@@ -4,7 +4,7 @@
 # FlexCat compiles msgstr into AmigaGPT.catalog and does NOT honour gettext
 # "#, fuzzy" markers. Guessed fuzzy msgstr must never reach FlexCat.
 #
-# - catalogs/german/deutsch.po: HARD FAIL if any fuzzy remains (no auto-strip).
+# - catalogs/german/deutsch.po: HARD FAIL if any fuzzy or empty msgstr remains.
 # - other languages: fuzzy/empty → msgstr = msgid (English UI fallback).
 #
 # Usage: tools/flexcat-po-prepare.sh <po-file> ...

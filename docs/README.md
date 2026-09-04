@@ -80,7 +80,7 @@ Details zum Modul: [SCINTILLA-ARCHITECTURE.md](SCINTILLA-ARCHITECTURE.md) (Phase
 
 Neue oder geänderte Strings: `catalogs/AmigaGPT.pot` bzw. die `catalogs/*/*.po` anpassen, dann **FlexCat** im `PATH` und Ziel `**make -f Makefile.MorphOS catalog`** (wird auch beim normalen Build mitangezogen, sobald die Katalog-Quellen fehlen). Die Dateien `**src/AmigaGPT_cat.c**` / `**src/AmigaGPT_cat.h**` sind **generiert** — nicht von Hand bearbeiten. Details: [BUILD-MORPHOS-WSL.md](BUILD-MORPHOS-WSL.md) (FlexCat).
 
-**FlexCat ≠ gettext fuzzy:** FlexCat schreibt `msgstr` unverändert in `AmigaGPT.catalog` und **ignoriert** `#, fuzzy`. Deshalb nutzt der `catalog`-Target `msgmerge --no-fuzzy-matching` und `tools/flexcat-po-prepare.sh`. **`deutsch.po` mit Fuzzy = Hard-Fail** (Datei wird nicht angefasst; Mensch muss `msgstr` prüfen und Fuzzy entfernen). Andere Sprachen: Fuzzy/leere `msgstr` → `msgid`.
+**FlexCat ≠ gettext fuzzy:** FlexCat schreibt `msgstr` unverändert in `AmigaGPT.catalog` und **ignoriert** `#, fuzzy`. Deshalb nutzt der `catalog`-Target `msgmerge --no-fuzzy-matching` und `tools/flexcat-po-prepare.sh`. **`deutsch.po` mit Fuzzy oder leerem `msgstr` = Hard-Fail** (Datei wird nicht angefasst; Mensch muss übersetzen bzw. Fuzzy entfernen). Andere Sprachen: Fuzzy/leere `msgstr` → `msgid`.
 
 **Pflege-Policy (Fork):** Aktiv gepflegt wird nur **`catalogs/german/deutsch.po`** (Deutsch). Nach `msgmerge` setzen die übrigen `catalogs/*/*.po` für leere Strings **`msgstr` = englisches `msgid`** (englische UI-Fallbacks) — kein Review nötig. Keine maschinellen Übersetzungen in andere Sprachen ohne Muttersprachler-Review.
 

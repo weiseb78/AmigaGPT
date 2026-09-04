@@ -2117,7 +2117,7 @@ msgstr "Eigener Anbieter"
 #: src/menu.c:148
 msgctxt "STRING_MENU_CUSTOM_SERVER_SETTINGS (398//)"
 msgid "Custom Server Settings"
-msgstr "Einstellungen für Chat-Anbieter"
+msgstr "Einstellungen für eigenen Anbieter"
 
 #: src/gui.c
 msgctxt "STRING_MENU_VIEW_CODEBLOCKS (399//)"

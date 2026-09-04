@@ -2,8 +2,8 @@
 """Prepare one .po file for FlexCat (no gettext fuzzy semantics).
 
 FlexCat ships msgstr as-is and ignores "#, fuzzy". This script:
-  - german/deutsch.po: HARD FAIL if any fuzzy flag is present (no strip, no write).
-    A human must fix msgstr and remove fuzzy before FlexCat runs.
+  - german/deutsch.po: HARD FAIL if any fuzzy flag OR empty msgstr is present
+    (no strip, no write). A human must fix before FlexCat runs.
   - other .po: fuzzy entry → msgstr = msgid; strip fuzzy flags; empty msgstr → msgid
 """
 from __future__ import annotations
@@ -52,17 +52,31 @@ def _strip_fuzzy_from_head(head: str) -> str:
     return "".join(out)
 
 
+def _msgctxt_of(head: str) -> str:
+    ctx = re.search(r'^msgctxt "([^"]*)"', head, re.MULTILINE)
+    return ctx.group(1) if ctx else "(no msgctxt)"
+
+
 def _fuzzy_msgctxts(text: str) -> list[str]:
     """Return msgctxt ids for entries that still carry a fuzzy flag."""
     found: list[str] = []
     for m in ENTRY_RE.finditer(text):
         if not _head_has_fuzzy(m.group("head")):
             continue
-        head = m.group("head")
-        ctx = re.search(r'^msgctxt "([^"]*)"', head, re.MULTILINE)
-        found.append(ctx.group(1) if ctx else "(no msgctxt)")
+        found.append(_msgctxt_of(m.group("head")))
     if not found and FUZZY_FLAG_RE.search(text):
         found.append("(fuzzy flag outside entry match)")
+    return found
+
+
+def _empty_msgstr_msgctxts(text: str) -> list[str]:
+    """Return msgctxt ids for non-header entries with empty msgstr."""
+    found: list[str] = []
+    for m in ENTRY_RE.finditer(text):
+        if _msgid_is_header(m.group("msgid")):
+            continue
+        if _is_empty_msgstr(m.group("msgstr")):
+            found.append(_msgctxt_of(m.group("head")))
     return found
 
 
@@ -103,6 +117,14 @@ def process_non_german(text: str) -> tuple[str, dict[str, int]]:
     return "".join(cleaned), stats
 
 
+def _print_list(title: str, items: list[str]) -> None:
+    print(title, file=sys.stderr)
+    for ctx in items[:20]:
+        print(f"  - {ctx}", file=sys.stderr)
+    if len(items) > 20:
+        print(f"  ... and {len(items) - 20} more", file=sys.stderr)
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print(f"usage: {sys.argv[0]} <file.po>", file=sys.stderr)
@@ -112,31 +134,38 @@ def main() -> int:
     is_german = path.name == "deutsch.po" and "german" in path.parts
 
     if is_german:
+        fail = 0
         fuzzies = _fuzzy_msgctxts(text)
         if fuzzies:
             print(
-                f"ERROR: {path} has gettext fuzzy entries — refusing to modify or compile.\n"
+                f"ERROR: {path} has gettext fuzzy entries -- refusing to modify or compile.\n"
                 "FlexCat ignores '#, fuzzy' and would ship those msgstr values into "
                 "AmigaGPT.catalog.\n"
-                "Fix each msgstr (or set msgstr = msgid), remove the fuzzy flag, then rebuild.\n"
-                "Fuzzy entries:",
+                "Fix each msgstr (or set msgstr = msgid), remove the fuzzy flag, then rebuild.",
                 file=sys.stderr,
             )
-            for ctx in fuzzies[:20]:
-                print(f"  - {ctx}", file=sys.stderr)
-            if len(fuzzies) > 20:
-                print(f"  … and {len(fuzzies) - 20} more", file=sys.stderr)
-            return 1
-        return 0
+            _print_list("Fuzzy entries:", fuzzies)
+            fail = 1
+        empties = _empty_msgstr_msgctxts(text)
+        if empties:
+            print(
+                f"ERROR: {path} has empty msgstr entries -- refusing to modify or compile.\n"
+                "FlexCat would ship blank UI text into AmigaGPT.catalog.\n"
+                "Translate each entry (or temporarily set msgstr = msgid), then rebuild.",
+                file=sys.stderr,
+            )
+            _print_list("Empty msgstr entries:", empties)
+            fail = 1
+        return fail
 
     text, stats = process_non_german(text)
     path.write_text(text, encoding="utf-8")
 
     bits = []
     if stats["fuzzy_reset"]:
-        bits.append(f"reset {stats['fuzzy_reset']} fuzzy→msgid")
+        bits.append(f"reset {stats['fuzzy_reset']} fuzzy->msgid")
     if stats["empty_filled"]:
-        bits.append(f"filled {stats['empty_filled']} empty←msgid")
+        bits.append(f"filled {stats['empty_filled']} empty<-msgid")
     if stats["fuzzy_stripped"] and not bits:
         bits.append(f"stripped {stats['fuzzy_stripped']} fuzzy flag(s)")
     if bits:

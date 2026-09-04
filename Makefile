@@ -99,7 +99,7 @@ catalog:
 	@flexcat $(CATALOG_DEFINITION) $(SOURCE_DIR)/$(PROGRAM_NAME)_cat.c=C_c.sd || true
 
 	$(info Updating catalog translations)
-	@# FlexCat ignores gettext "#, fuzzy" — never invent guessed msgstr.
+	@# FlexCat ignores gettext "#, fuzzy" -- never invent guessed msgstr.
 	@for catalog_translation in $(catalog_translations); do \
 		msgmerge -U --no-fuzzy-matching --backup=none $$catalog_translation $(CATALOG_DEFINITION)|| true; \
 	done

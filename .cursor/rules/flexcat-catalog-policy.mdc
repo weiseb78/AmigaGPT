@@ -14,7 +14,7 @@ FlexCat **ignores** gettext `#, fuzzy` and ships `msgstr` into `AmigaGPT.catalog
 
 ## Hard rules
 
-1. **Never leave `#, fuzzy` in `catalogs/german/deutsch.po`.** `tools/flexcat-po-prepare.sh` **hard-fails** the catalog build if any remain (no auto-strip).
+1. **Never leave `#, fuzzy` or empty `msgstr` in `catalogs/german/deutsch.po`.** `tools/flexcat-po-prepare.sh` **hard-fails** the catalog build if either remains (no auto-strip / no auto-fill for German).
 2. Merge via Makefile `catalog` only: `msgmerge --no-fuzzy-matching` + prepare script — do not invent ad-hoc `msgmerge` that creates fuzzies.
 3. Actively translate **only** `deutsch.po`. Other `catalogs/*/*.po`: `msgstr` = English `msgid` (fallback). No machine translation of other languages.
 4. After fixing German strings: `make -f Makefile.MorphOS catalog` (or full `bash ship-morphos.sh` if shipping).
