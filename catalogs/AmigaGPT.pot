@@ -2192,3 +2192,13 @@ msgstr "Image Provider Settings"
 msgctxt "STRING_SPEECH_PROVIDER_SETTINGS_TITLE (425//)"
 msgid "Speech Provider Settings"
 msgstr "Speech Provider Settings"
+
+#: src/openai.c
+msgctxt "STRING_ERROR_SSL_HANDSHAKE_TIMEOUT (426//)"
+msgid "SSL: handshake timeout"
+msgstr "SSL: handshake timeout"
+
+#: src/openai.c
+msgctxt "STRING_ERROR_SSL_WANT_READ_TIMEOUT (427//)"
+msgid "SSL: timeout waiting for stream data (WANT_READ)"
+msgstr "SSL: timeout waiting for stream data (WANT_READ)"

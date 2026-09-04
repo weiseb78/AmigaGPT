@@ -2112,7 +2112,8 @@ static LONG loadConfig(struct AmigaGPTConfigData *data) {
     if (file == 0) {
         streamLogLifecycle("config read missing create envarc");
         saveConfig(data);
-        streamLogSyncFromConfig();
+        streamLogSyncFromFlags((BOOL)data->debugStreamLog,
+                               (BOOL)data->debugLifecycleLog);
         return RETURN_OK;
     }
     if (source == CONFIG_SOURCE_ENVARC) {
@@ -2800,7 +2801,8 @@ static LONG loadConfig(struct AmigaGPTConfigData *data) {
         printf("Config migration complete. Your old settings have been "
                "preserved.\n");
 #ifdef __MORPHOS__
-        streamLogSyncFromConfig();
+        streamLogSyncFromFlags((BOOL)data->debugStreamLog,
+                               (BOOL)data->debugLifecycleLog);
 #endif
         return RETURN_OK;
     }
@@ -2960,7 +2962,8 @@ static LONG loadConfig(struct AmigaGPTConfigData *data) {
     FreeVec(configJsonString);
     json_object_put(configJsonObject);
 #ifdef __MORPHOS__
-    streamLogSyncFromConfig();
+    streamLogSyncFromFlags((BOOL)data->debugStreamLog,
+                           (BOOL)data->debugLifecycleLog);
 #endif
     return RETURN_OK;
 }
@@ -3021,6 +3024,9 @@ LONG initConfig(void) {
     if (configObj == NULL)
         return RETURN_ERROR;
 
+#ifdef __MORPHOS__
+    streamLogSyncFromConfig();
+#endif
     return RETURN_OK;
 }
 

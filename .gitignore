@@ -23,6 +23,10 @@ super-linter.log
 # GitHub Actions leftovers
 github_conf
 
+# openssl3 probe: rebuild locally; do not commit MorphOS binaries or screenshots
+tools/openssl3-probe/bin/
+tools/openssl3-probe/morphos-screen.png
+
 # Cursor hook state (morphos-after-make)
 .cursor/morphos-package-pending
 

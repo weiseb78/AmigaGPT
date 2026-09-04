@@ -2,7 +2,7 @@
 
 Dokumentation der **zusätzlichen** Komponenten, die für einen nativen Cross-Build von AmigaGPT unter WSL **neben** dem BIGFOOT `morphos-sdk` nötig sind. **Kein Docker**, kein zweiter Compiler.
 
-**Stand:** 2026-08-28 · libmagic (Aminet `dev/lib/magic.lha`) ergänzt für upstream 3.2 Attachments.
+**Stand:** 2026-08-29 · TLS über `openssl3.library` (`-lssl_shared`) + `bsdsocket` in `initOpenAIConnector`; libmagic für Attachments.
 
 **Nativ vs. WSL (vollständig):** [MORPHOS-SDK-NATIV-UND-WSL.md](MORPHOS-SDK-NATIV-UND-WSL.md) — MorphOS-Voll-SDK als Referenz, `devfiles.txt`-Inventar, `pack`/`sdk.pack`, Scintilla Code-Viewer (Phase 6–7b).
 
@@ -53,7 +53,7 @@ BIGFOOT installiert u. a.:
 |--------|---------|
 | `fatal error: SDI_hook.h: No such file or directory` | SDI nur im Zusatz-SDK |
 | `MUIA_Aboutbox_URL undeclared` | neuere `Aboutbox_mcc.h` nur im Zusatz-SDK (`/gg` zu alt) |
-| `cannot find -ljson-c` / `-lssl` / `-lcrypto` | Link-Libs nur im Zusatz-SDK |
+| `cannot find -ljson-c` / `-lssl_shared` / `-lcrypto_shared` | Shared-Stubs nur im Zusatz-SDK / BIGFOOT `libnix/` |
 | `cannot find -lmagic` | libmagic nur via Aminet-Paket (siehe unten) |
 
 ---
@@ -69,7 +69,7 @@ Pfad im Workspace: `~/development/morphos/AmigaSDK-gcc/morphos/sdk/`
 |--------------|-------------|------------------------|
 | **SDI** | `ppc-morphos/include/SDI_hook.h` (+ SDI-Makros) | GUI-Fenster: `MakeHook`, MUI-SDI in vielen `src/*Window.c`, `menu.c`, `gui.c`, … |
 | **json-c** | `include/json-c/json.h` (über `-I…/os-include` bzw. Compiler-Pfade) | `openai.c`, `config.c`, `MainWindow.c`, `gui.c`, `ARexx.c`, … |
-| **OpenSSL (AmiSSL)** | `openssl/*.h` (Link über `-lssl -lcrypto`) | `openai.c` (HTTPS) |
+| **OpenSSL** | `openssl/*.h` (Link über `-lssl_shared -lcrypto_shared`) | `openai.c` (HTTPS) — Laufzeit: **`openssl3.library`** |
 | **codesets.library** | `ppc-morphos/include/libraries/codesets.h`, `proto/codesets.h` | `openai.h`, `config.h`, `gui.c` (UTF-8 / Zeichensätze) |
 | **guigfx** | `os-include/guigfx/guigfx.h`, `proto/guigfx.h` | `gui.h` (Bildvorschau) |
 | **MUI Aboutbox (neu)** | `os-include/mui/Aboutbox_mcc.h` | `AboutAmigaGPTWindow.c`, `gui.c` — u. a. `MUIA_Aboutbox_URL`, `MUIA_Aboutbox_URLText` (in `/gg` nicht vorhanden) |
@@ -86,14 +86,17 @@ Pfad im Workspace: `~/development/morphos/AmigaSDK-gcc/morphos/sdk/`
 |---------|----------------|----------|
 | **libjson-c** | `ppc-morphos/lib/libjson-c.a` | `-ljson-c` |
 | **libmagic** | `ppc-morphos/lib/libnix/libmagic.a` (Multilib, `-noixemul`) | `-lmagic` |
-| **libssl** | `ppc-morphos/lib/libssl.a` | `-lssl` |
-| **libcrypto** | (mit ssl-Paket) | `-lcrypto` |
+| **libssl / libcrypto (shared)** | `ppc-morphos/lib/libnix/libssl_shared.a`, `libcrypto_shared.a` | `-lssl_shared`, `-lcrypto_shared` → **`openssl3.library`** |
 | **libpthread** | `ppc-morphos/lib/libpthread.a` | `-lpthread` (Abhängigkeit von libmagic) |
 | **libdebug** | `ppc-morphos/lib/libdebug.a` | `-ldebug` (Fork-Debug) |
 | **libm**, **libatomic** | SDK / GCC | `-lm`, `-latomic` |
 | **GCC-Runtime** | `lib/gcc/ppc-morphos/11.2.0/` | `-L$(GCCLIBDIR)` |
 
-AmiSSL wird zur Laufzeit auf MorphOS als **Bibliothek auf dem Zielsystem** erwartet (nicht statisch vollständig ins Binary eingebettet wie ein Linux-.so); der Cross-Build linkt gegen die SDK-Stub-/Import-Libs.
+**TLS auf MorphOS (wichtig):** AmigaGPT linkt **nicht** die statischen `libssl.a`/`libcrypto.a` (SDK-OpenSSL **3.0.1**, u. a. CVE-2022-0778) und **nicht** AmiSSL. Stattdessen Shared-Stubs (`_fetch_OpenSSL3Base`), die zur Laufzeit **`openssl3.library`** öffnen (seit MorphOS 3.16; OS-Hotfixes aktualisieren die Library). Mindest-OS: **MorphOS 3.16+**.
+
+Die App muss **`bsdsocket.library`** selbst öffnen (`OpenLibrary`, Version 4), damit libnix-`gethostbyname`/`socket` funktionieren — auch wenn `openssl3.library` bsdsocket intern nutzt (Probe/AmigaGPT-Verhalten).
+
+OS3/OS4 bleiben bei **AmiSSL** (`-lamisslstubs`); MorphOS nutzt **openssl3.library** (nicht AmiSSL, obwohl viele Cross-Platform-Apps AmiSSL auch auf MorphOS verwenden).
 
 **libmagic** wird **statisch** gelinkt (`libmagic.a`). Zur Laufzeit braucht die App die Datenbank **`magic.mgc`** (nicht die `.a`) — AmigaGPT liefert sie im Bundle (`bundle/AmigaGPT/AmigaGPT/magic.mgc`); sie wird bei Bedarf aus `PROGDIR:`, `AMIGAGPT:` oder `C:` geladen. Ohne `magic.mgc` greift ein Extension-Fallback.
 
@@ -188,7 +191,7 @@ Ausgabe bei Erfolg: lokal `out/package-morphos/` + `out/AmigaGPT-MorphOS-cross.l
 
 Manuell geht weiterhin das Kopieren einzelner Dateien nach `Z:\morphos\out-crosscompile\` (ersetzt dann den automatischen Deploy-Schritt, sofern das Ergebnis dort liegt).
 
-Auf MorphOS zusätzlich Laufzeit-Voraussetzungen aus dem AmigaGPT-README (MUI, AmiSSL, codesets.library, ggf. guigfx MCC, …).
+Auf MorphOS zusätzlich Laufzeit-Voraussetzungen: MUI, **openssl3.library** (MorphOS 3.16+), codesets.library, ggf. guigfx MCC, TCP/IP. **Kein AmiSSL** nötig.
 
 ---
 

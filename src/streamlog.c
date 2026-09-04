@@ -17,6 +17,11 @@
 
 void streamLogSyncFromConfig(void) {}
 
+void streamLogSyncFromFlags(BOOL debugStreamLog, BOOL debugLifecycleLog) {
+    (void)debugStreamLog;
+    (void)debugLifecycleLog;
+}
+
 BOOL streamLogIsEnabled(void) { return FALSE; }
 
 void streamLogChatEnd(CONST_STRPTR outcome, ULONG messageLen, BOOL completedOk,
@@ -141,18 +146,23 @@ static void streamLogEmit(CONST_STRPTR path, CONST_STRPTR line) {
 #endif
 }
 
-void streamLogSyncFromConfig(void) {
+void streamLogSyncFromFlags(BOOL debugStreamLog, BOOL debugLifecycleLog) {
     BOOL wasEnabled = streamLogEnabled;
     BOOL wasLifecycleEnabled = streamLogLifecycleEnabled;
 
-    streamLogEnabled = (BOOL)configGetDebugStreamLog();
-    streamLogLifecycleEnabled = (BOOL)configGetDebugLifecycleLog();
+    streamLogEnabled = debugStreamLog;
+    streamLogLifecycleEnabled = debugLifecycleLog;
     if (streamLogEnabled && !wasEnabled) {
         streamLogEmit(STREAMLOG_STREAM_PATH, "debug logging enabled");
     }
     if (streamLogLifecycleEnabled && !wasLifecycleEnabled) {
         streamLogLifecycle("lifecycle logging enabled");
     }
+}
+
+void streamLogSyncFromConfig(void) {
+    streamLogSyncFromFlags((BOOL)configGetDebugStreamLog(),
+                           (BOOL)configGetDebugLifecycleLog());
 }
 
 BOOL streamLogIsEnabled(void) { return streamLogEnabled; }

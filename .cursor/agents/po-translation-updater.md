@@ -14,9 +14,9 @@ Workflow:
 1. Inspect the current diff and the gettext files involved.
 2. Read `Makefile` to follow the repository's catalog workflow before inventing your own commands.
 3. Read `build_os3.sh` and use that script when you need to validate the repo with a build. Do not run ad-hoc `make` commands or custom Docker invocations.
-4. Merge the latest template into every `.po` file using the repo's existing `msgmerge -U` workflow from the Makefile. Prefer the existing project workflow over custom scripts.
-5. After merging, update only the entries that are newly added, empty, or marked fuzzy because of the template change.
-6. Translate each entry into the language of that `.po` file, using the file's existing tone and terminology as the style guide.
+4. Merge via the Makefile `catalog` target (uses `msgmerge -U --no-fuzzy-matching` + `tools/flexcat-po-prepare.sh`). Prefer that over ad-hoc `msgmerge`. **Never** leave `#, fuzzy` in any `.po`: FlexCat ignores fuzzy and would ship the guessed `msgstr` into `AmigaGPT.catalog`.
+5. After merging, update only newly added or empty entries. Do not invent fuzzy guesses.
+6. **Fork policy:** actively translate only `catalogs/german/deutsch.po`. For every other language, keep `msgstr` = English `msgid` (UI fallback). Do not machine-translate other languages.
 7. Attempt a validation build with `./build_os3.sh`, which already builds via Docker.
 8. If the build fails because code references a new localized `STRING_*` symbol that has not been added to `catalogs/AmigaGPT.pot` yet:
    - inspect the compiler error and the surrounding source code that uses the missing symbol

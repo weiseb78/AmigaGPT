@@ -13,6 +13,7 @@
 #include <json-c/json.h>
 #include <magic.h>
 #include <mui/Busy_mcc.h>
+#include <errno.h>
 #include <proto/exec.h>
 #include <proto/socket.h>
 #include <sys/select.h>
@@ -52,6 +53,10 @@
 #endif
 #define SOCKET_READ_WAIT_SECONDS 1
 #define SOCKET_READ_MAX_IDLE_SECONDS 180
+/** Delay between createSSLConnection retries (MUI can pump in between). */
+#define CONNECT_RETRY_DELAY_TICKS 50
+/** TLS handshake budget (1 s WaitSelect slices + MUI pump). */
+#define SSL_HANDSHAKE_MAX_SECONDS 20
 #define OPENAI_FILE_BOUNDARY "----AmigaGPTFormBoundary"
 
 #ifndef __MORPHOS__
@@ -170,7 +175,9 @@ static void chatStreamNoteReadTimeout(UWORD responseIndex,
     if (responseIndex > 0 || readBufferLen > 0) {
         chatStreamTruncated = TRUE;
     } else {
-        displayError("SSL: timeout waiting for stream data (WANT_READ)");
+        /* msgctxt "STRING_ERROR_SSL_WANT_READ_TIMEOUT (427//)" */
+        /* msgid "SSL: timeout waiting for stream data (WANT_READ)" */
+        displayError(STRING_ERROR_SSL_WANT_READ_TIMEOUT);
     }
 }
 
@@ -207,6 +214,20 @@ static ULONG createSSLConnection(CONST_STRPTR host, UWORD port, BOOL useSSL,
                                  BOOL proxyRequiresAuth,
                                  CONST_STRPTR proxyUsername,
                                  CONST_STRPTR proxyPassword);
+
+typedef enum {
+    OPENAI_CONNECT_OK = 0,
+    OPENAI_CONNECT_FAILED,
+    OPENAI_CONNECT_ABORTED
+} OpenAIConnectResult;
+
+static OpenAIConnectResult openAIConnectWithRetries(
+    CONST_STRPTR host, UWORD port, BOOL useSSL, BOOL useProxy,
+    CONST_STRPTR proxyHost, UWORD proxyPort, BOOL proxyUsesSSL,
+    BOOL proxyRequiresAuth, CONST_STRPTR proxyUsername,
+    CONST_STRPTR proxyPassword);
+static BOOL openAIConnectShouldAbort(OpenAIConnectResult result);
+static BOOL openaiPumpMUIForNetwork(BOOL checkStreamCancel);
 static ULONG rangeRand(ULONG maxValue);
 static BPTR ErrOutput();
 static BPTR GetStdErr();
@@ -228,6 +249,7 @@ static void flushSslWrites(BOOL useSSL);
 static void flushTransportWrites(BOOL useSSL);
 static LONG waitForSocketReadable(BOOL useSSL);
 static LONG waitForSocketWritable(void);
+static LONG sslConnectWithMuiPump(SSL *s);
 static void clearHttpReadBuffer(void);
 static BOOL hostUsesRemoteFileIds(CONST_STRPTR host,
                                   CONST_STRPTR apiEndpointUrl,
@@ -1731,6 +1753,8 @@ static LONG reconnectAndResendChatRequest(
         updateStatusBar(STRING_ERROR_LOST_CONNECTION, redPen);
         closeActiveResponseConnection();
         Delay(10);
+        if (openaiPumpMUIForNetwork(TRUE))
+            return -1;
         if (createSSLConnection(host, port, useSSL, useProxy, proxyHost,
                                 proxyPort, proxyUsesSSL, proxyRequiresAuth,
                                 proxyUsername, proxyPassword) == RETURN_ERROR)
@@ -1793,6 +1817,141 @@ static LONG waitForSocketWritable(void) {
     tv.tv_sec = 1;
     tv.tv_usec = 0;
     return WaitSelect(sock + 1, NULL, &writefds, NULL, &tv, NULL);
+}
+
+/**
+ * TLS handshake without SSL_MODE_AUTO_RETRY so WANT_READ/WANT_WRITE return to
+ * us. Pump MUI between WaitSelect slices; abort on quit/cancel or timeout.
+ * Blocking tcp connect() stays as-is ? only the handshake is progressive.
+ **/
+static LONG sslConnectWithMuiPump(SSL *s) {
+    ULONG elapsedSec = 0;
+
+    if (s == NULL || sock < 0)
+        return -1;
+
+#ifdef SSL_MODE_AUTO_RETRY
+    /* AUTO_RETRY would spin/block inside OpenSSL without MUI or a deadline. */
+    SSL_clear_mode(s, SSL_MODE_AUTO_RETRY);
+#endif
+
+    ERR_clear_error();
+    for (;;) {
+        int ret = SSL_connect(s);
+        int err;
+
+        if (ret == 1) {
+#ifdef SSL_MODE_AUTO_RETRY
+            SSL_set_mode(s, SSL_MODE_AUTO_RETRY);
+#endif
+            return 1;
+        }
+
+        err = SSL_get_error(s, ret);
+#ifndef DAEMON
+        if (openaiPumpMUIForNetwork(TRUE)) {
+            streamLogApiError("ssl_connect", "aborted");
+            return -1;
+        }
+#endif
+
+        if (err == SSL_ERROR_WANT_READ) {
+            if (waitForSocketReadable(FALSE) < 0) {
+                streamLogApiError("ssl_connect", "want_read wait failed");
+                return ret;
+            }
+        } else if (err == SSL_ERROR_WANT_WRITE) {
+            if (waitForSocketWritable() < 0) {
+                streamLogApiError("ssl_connect", "want_write wait failed");
+                return ret;
+            }
+        } else {
+            return ret;
+        }
+
+        elapsedSec++;
+        if (elapsedSec >= SSL_HANDSHAKE_MAX_SECONDS) {
+            streamLogApiError("ssl_connect", "handshake timeout");
+            /* msgctxt "STRING_ERROR_SSL_HANDSHAKE_TIMEOUT (426//)" */
+            /* msgid "SSL: handshake timeout" */
+            displayError(STRING_ERROR_SSL_HANDSHAKE_TIMEOUT);
+            return -1;
+        }
+    }
+}
+
+#ifndef DAEMON
+static BOOL openaiPumpMUIForNetwork(BOOL checkStreamCancel) {
+    if (app != NULL) {
+        ULONG muiSig = 0;
+        ULONG appRet = DoMethod(app, MUIM_Application_NewInput, &muiSig);
+
+        if (appRet == MUIV_Application_ReturnID_Quit ||
+            mainWindowIsShuttingDown()) {
+            mainWindowSignalQuit();
+            return TRUE;
+        }
+        if (checkStreamCancel && chatStreamCancelRequested) {
+            return TRUE;
+        }
+    }
+    if (loadingBar != NULL) {
+        DoMethod(loadingBar, MUIM_Busy_Move);
+    }
+    return FALSE;
+}
+#else
+static BOOL openaiPumpMUIForNetwork(BOOL checkStreamCancel) {
+    (void)checkStreamCancel;
+    return FALSE;
+}
+#endif
+
+static OpenAIConnectResult openAIConnectWithRetries(
+    CONST_STRPTR host, UWORD port, BOOL useSSL, BOOL useProxy,
+    CONST_STRPTR proxyHost, UWORD proxyPort, BOOL proxyUsesSSL,
+    BOOL proxyRequiresAuth, CONST_STRPTR proxyUsername,
+    CONST_STRPTR proxyPassword) {
+    UBYTE retry = 0;
+
+#ifndef DAEMON
+    updateStatusBar(STRING_CONNECTING, yellowPen);
+#endif
+
+    for (;;) {
+        if (createSSLConnection(host, port, useSSL, useProxy, proxyHost,
+                                proxyPort, proxyUsesSSL, proxyRequiresAuth,
+                                proxyUsername, proxyPassword) == RETURN_OK) {
+            return OPENAI_CONNECT_OK;
+        }
+
+#ifndef DAEMON
+        if (openaiPumpMUIForNetwork(TRUE)) {
+            return OPENAI_CONNECT_ABORTED;
+        }
+#endif
+
+        retry++;
+        {
+            UBYTE detail[48];
+            snprintf((STRPTR)detail, sizeof(detail), "attempt=%u",
+                     (unsigned)retry);
+            streamLogApiError("connect", (STRPTR)detail);
+        }
+
+        if (retry >= MAX_CONNECTION_RETRIES) {
+            return OPENAI_CONNECT_FAILED;
+        }
+        Delay(CONNECT_RETRY_DELAY_TICKS);
+    }
+}
+
+static BOOL openAIConnectShouldAbort(OpenAIConnectResult result) {
+    if (result == OPENAI_CONNECT_OK)
+        return FALSE;
+    if (result != OPENAI_CONNECT_ABORTED)
+        displayError(STRING_ERROR_CONNECTING_MAX_RETRIES);
+    return TRUE;
 }
 
 static void clearHttpReadBuffer(void) {
@@ -3193,16 +3352,18 @@ LONG initOpenAIConnector() {
         displayError(STRING_ERROR_BSDSOCKET_LIB_OPEN);
         return RETURN_ERROR;
     }
-#elif defined(__AMIGAOS4__)
+#elif defined(__AMIGAOS4__) || defined(__MORPHOS__)
     if ((SocketBase = OpenLibrary("bsdsocket.library", 4)) == NULL) {
         displayError(STRING_ERROR_BSDSOCKET_LIB_OPEN_OS4);
         return RETURN_ERROR;
     }
+#if defined(__AMIGAOS4__)
     if ((ISocket = (struct SocketIFace *)GetInterface(SocketBase, "main", 1,
                                                       NULL)) == NULL) {
         displayError(STRING_ERROR_BSDSOCKET_INTERFACE_OPEN);
         return RETURN_ERROR;
     }
+#endif
 #endif
 
 #ifdef __AMIGAOS3__
@@ -3275,6 +3436,10 @@ static ULONG createSSLConnection(CONST_STRPTR host, UWORD port, BOOL useSSL,
 
 #ifndef DAEMON
     showLoadingBar();
+    if (openaiPumpMUIForNetwork(FALSE)) {
+        closeActiveResponseConnection();
+        return RETURN_ERROR;
+    }
 #endif
 
     /* Drop any prior shared connection without blocking SSL_shutdown. */
@@ -3289,6 +3454,10 @@ static ULONG createSSLConnection(CONST_STRPTR host, UWORD port, BOOL useSSL,
     }
 
     // Connect to the server first
+    if (openaiPumpMUIForNetwork(TRUE)) {
+        closeActiveResponseConnection();
+        return RETURN_ERROR;
+    }
     if ((hostent = gethostbyname(useProxy ? proxyHost : host)) != NULL) {
         memset(&addr, 0, sizeof(addr));
         addr.sin_family = AF_INET;
@@ -3320,11 +3489,13 @@ static ULONG createSSLConnection(CONST_STRPTR host, UWORD port, BOOL useSSL,
         }
 
         if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+            streamLogApiError("connect", "tcp connect failed");
             displayError(useProxy ? STRING_ERROR_CONNECTION_PROXY
                                   : STRING_ERROR_CONNECTION);
             closeActiveResponseConnection();
             return RETURN_ERROR;
         }
+        streamLogApiError("connect", "tcp connected");
     } else {
         displayError(STRING_ERROR_SOCKET_CREATE);
         closeActiveResponseConnection();
@@ -3389,9 +3560,13 @@ static ULONG createSSLConnection(CONST_STRPTR host, UWORD port, BOOL useSSL,
         /* Set up SNI (Server Name Indication) */
         SSL_set_tlsext_host_name(ssl, host);
 
-        /* Perform SSL handshake */
-        ERR_clear_error();
-        ssl_err = SSL_connect(ssl);
+        /* Perform SSL handshake (progressive; MUI pump + timeout). */
+        if (openaiPumpMUIForNetwork(TRUE)) {
+            closeActiveResponseConnection();
+            return RETURN_ERROR;
+        }
+        streamLogApiError("connect", "ssl handshake begin");
+        ssl_err = sslConnectWithMuiPump(ssl);
 
         if (ssl_err == 1) {
             /* Handshake successful. */
@@ -3399,7 +3574,8 @@ static ULONG createSSLConnection(CONST_STRPTR host, UWORD port, BOOL useSSL,
             // SSL_get_cipher(ssl));
         } else {
             /* Handshake failed: report with full diagnostics. */
-            reportSslError(ssl, ssl_err, "SSL_connect");
+            if (ssl_err != -1)
+                reportSslError(ssl, ssl_err, "SSL_connect");
             closeActiveResponseConnection();
             return RETURN_ERROR;
         }
@@ -3432,7 +3608,6 @@ getChatModels(STRPTR host, ULONG port, BOOL useSSL, CONST_STRPTR apiKey,
               CONST_STRPTR proxyUsername, CONST_STRPTR proxyPassword,
               CONST_STRPTR apiEndpointUrl, AuthorizationType authorizationType,
               CONST_STRPTR customHeaders) {
-    UBYTE connectionRetryCount = 0;
     if (host == NULL || strlen(host) == 0) {
         host = OPENAI_HOST;
         useSSL = TRUE;
@@ -3515,14 +3690,10 @@ getChatModels(STRPTR host, ULONG port, BOOL useSSL, CONST_STRPTR apiKey,
 
     FreeVec(proxyAuthHeader);
 
-    updateStatusBar(STRING_CONNECTING, yellowPen);
-    while (createSSLConnection(host, port, useSSL, useProxy, proxyHost,
-                               proxyPort, proxyUsesSSL, proxyRequiresAuth,
-                               proxyUsername, proxyPassword) == RETURN_ERROR) {
-        if (connectionRetryCount++ >= MAX_CONNECTION_RETRIES) {
-            displayError(STRING_ERROR_CONNECTING_MAX_RETRIES);
-            return NULL;
-        }
+    if (openAIConnectShouldAbort(openAIConnectWithRetries(
+            host, port, useSSL, useProxy, proxyHost, proxyPort, proxyUsesSSL,
+            proxyRequiresAuth, proxyUsername, proxyPassword))) {
+        return NULL;
     }
 
     updateStatusBar(STRING_SENDING_REQUEST, yellowPen);
@@ -3912,7 +4083,6 @@ struct json_object **postChatMessageToOpenAI(
     static UBYTE streamReconnectStreak = 0;
     static BOOL streamSawAnyContent = FALSE;
     UWORD responseIndex = 0;
-    UBYTE connectionRetryCount = 0;
     UBYTE attachmentRetryCount = 0;
     BOOL reconnectCurrentStream = FALSE;
     STRPTR requestBuffer = NULL;
@@ -4635,20 +4805,14 @@ struct json_object **postChatMessageToOpenAI(
 
         FreeVec(authHeader);
 
-        updateStatusBar(STRING_CONNECTING, yellowPen);
-        while (createSSLConnection(host, port, useSSL, useProxy, proxyHost,
-                                   proxyPort, proxyUsesSSL, proxyRequiresAuth,
-                                   proxyUsername,
-                                   proxyPassword) == RETURN_ERROR) {
-            if (connectionRetryCount++ >= MAX_CONNECTION_RETRIES) {
-                displayError(STRING_ERROR_CONNECTING_MAX_RETRIES);
-                chatStreamInProgress = FALSE;
-                FreeVec(requestBuffer);
-                FreeVec(responses);
-                return NULL;
-            }
+        if (openAIConnectShouldAbort(openAIConnectWithRetries(
+                host, port, useSSL, useProxy, proxyHost, proxyPort, proxyUsesSSL,
+                proxyRequiresAuth, proxyUsername, proxyPassword))) {
+            chatStreamInProgress = FALSE;
+            FreeVec(requestBuffer);
+            FreeVec(responses);
+            return NULL;
         }
-        connectionRetryCount = 0;
         {
             UBYTE sizeMessage[80];
             snprintf(sizeMessage, sizeof(sizeMessage), "Sending %lu bytes...",
@@ -4947,6 +5111,8 @@ struct json_object **postChatMessageToOpenAI(
 
                             memmove(readBuffer, afterEvent,
                                     strlen(afterEvent) + 1);
+                            chatStreamCompletedOk = TRUE;
+                            chatStreamInProgress = FALSE;
                             doneReading = TRUE;
                             break;
                         }
@@ -5062,6 +5228,7 @@ struct json_object **postChatMessageToOpenAI(
                         json_object_new_string("response.completed"));
                     responses[responseIndex++] = completed;
                     memset(readBuffer, 0, READ_BUFFER_LENGTH);
+                    chatStreamCompletedOk = TRUE;
                     chatStreamInProgress = FALSE;
                 }
                 doneReading = TRUE;
@@ -5085,6 +5252,7 @@ struct json_object **postChatMessageToOpenAI(
                     memset(readBuffer, 0, READ_BUFFER_LENGTH);
 
                     doneReading = TRUE;
+                    chatStreamCompletedOk = TRUE;
                     chatStreamInProgress = FALSE;
                 }
                 break;
@@ -5120,6 +5288,7 @@ struct json_object **postChatMessageToOpenAI(
                         memset(readBuffer, 0, READ_BUFFER_LENGTH);
 
                         doneReading = TRUE;
+                        chatStreamCompletedOk = TRUE;
                         chatStreamInProgress = FALSE;
                         break;
                     }
@@ -5222,9 +5391,24 @@ struct json_object **postChatMessageToOpenAI(
             }
         }
         if (effectiveStream) {
-            ULONG readBufferLen =
-                readBuffer != NULL ? (ULONG)strlen((char *)readBuffer) : 0;
-            chatStreamFinalizeTransport(responseIndex, readBufferLen);
+            /* Apply response.completed before finalize so transport is OK
+             * (synthetic EOF/[DONE] markers used to set completedOk only after
+             * finalize ? false PARTIAL / "Response incomplete"). */
+            if (responseIndex > 0 && responses[responseIndex - 1] != NULL) {
+                STRPTR type = json_object_get_string(
+                    json_object_object_get(responses[responseIndex - 1],
+                                           "type"));
+                if (type != NULL && strcmp(type, "response.completed") == 0) {
+                    chatStreamCompletedOk = TRUE;
+                    chatStreamInProgress = FALSE;
+                    closeActiveResponseConnection();
+                }
+            }
+            {
+                ULONG readBufferLen =
+                    readBuffer != NULL ? (ULONG)strlen((char *)readBuffer) : 0;
+                chatStreamFinalizeTransport(responseIndex, readBufferLen);
+            }
         }
         FreeVec(tempReadBuffer);
 
@@ -5250,18 +5434,10 @@ struct json_object **postChatMessageToOpenAI(
         streamReconnectStreak = 0;
     }
     if (effectiveStream) {
-        // Check if the last response is the end of the stream and set the
-        // chatStreamInProgress flag to FALSE so that the next request will
-        // establish a new connection because OpenAI will close the connection
-        // after the stream is finished
         if (responseIndex > 0 && responses[responseIndex - 1] != NULL) {
             STRPTR type = json_object_get_string(
                 json_object_object_get(responses[responseIndex - 1], "type"));
             if (type != NULL && strcmp(type, "response.completed") == 0) {
-                chatStreamCompletedOk = TRUE;
-                chatStreamInProgress = FALSE;
-                closeActiveResponseConnection();
-
                 capturePendingFunctionCalls(responses[responseIndex - 1]);
             }
         }
@@ -5390,17 +5566,12 @@ struct json_object *postImageCreationRequestToOpenAI(
     memset(readBuffer, 0, READ_BUFFER_LENGTH);
 
     updateStatusBar(STRING_CONNECTING, yellowPen);
-    UBYTE connectionRetryCount = 0;
-    while (createSSLConnection(host, port, requestUsesSSL, useProxy, proxyHost,
-                               proxyPort, proxyUsesSSL, proxyRequiresAuth,
-                               proxyUsername, proxyPassword) == RETURN_ERROR) {
-        if (connectionRetryCount++ >= MAX_CONNECTION_RETRIES) {
-            displayError(STRING_ERROR_CONNECTING_MAX_RETRIES);
-            json_tokener_free(tokener);
-            return NULL;
-        }
+    if (openAIConnectShouldAbort(openAIConnectWithRetries(
+            host, port, requestUsesSSL, useProxy, proxyHost, proxyPort,
+            proxyUsesSSL, proxyRequiresAuth, proxyUsername, proxyPassword))) {
+        json_tokener_free(tokener);
+        return NULL;
     }
-    connectionRetryCount = 0;
 
     UTF8 *promptUTF8 =
         CodesetsUTF8Create(CSA_SourceCodeset, (Tag)systemCodeset, CSA_Source,
@@ -6125,16 +6296,12 @@ ULONG downloadFile(CONST_STRPTR url, CONST_STRPTR destination, BOOL useProxy,
 
     updateStatusBar(STRING_CONNECTING, yellowPen);
     UBYTE connectionRetryCount = 0;
-    while (createSSLConnection(hostString, 443, useSSL, useProxy, proxyHost,
-                               proxyPort, proxyUsesSSL, proxyRequiresAuth,
-                               proxyUsername, proxyPassword) == RETURN_ERROR) {
-        if (connectionRetryCount++ >= MAX_CONNECTION_RETRIES) {
-            displayError(STRING_ERROR_CONNECTING_MAX_RETRIES);
-            Close(fileHandle);
-            return RETURN_ERROR;
-        }
+    if (openAIConnectShouldAbort(openAIConnectWithRetries(
+            hostString, 443, useSSL, useProxy, proxyHost, proxyPort,
+            proxyUsesSSL, proxyRequiresAuth, proxyUsername, proxyPassword))) {
+        Close(fileHandle);
+        return RETURN_ERROR;
     }
-    connectionRetryCount = 0;
 
     updateStatusBar(STRING_SENDING_REQUEST, yellowPen);
     if (useSSL) {
@@ -6441,17 +6608,13 @@ ULONG downloadProviderFile(CONST_STRPTR host, UWORD port, BOOL useSSL,
 #ifndef DAEMON
     showLoadingBar();
 #endif
-    updateStatusBar(STRING_CONNECTING, yellowPen);
-    UBYTE connectionRetryCount = 0;
-    while (createSSLConnection(host, port, useSSL, useProxy, proxyHost,
-                               proxyPort, proxyUsesSSL, proxyRequiresAuth,
-                               proxyUsername, proxyPassword) == RETURN_ERROR) {
-        if (connectionRetryCount++ >= MAX_CONNECTION_RETRIES) {
+    if (openAIConnectShouldAbort(openAIConnectWithRetries(
+            host, port, useSSL, useProxy, proxyHost, proxyPort, proxyUsesSSL,
+            proxyRequiresAuth, proxyUsername, proxyPassword))) {
 #ifndef DAEMON
-            hideLoadingBar();
+        hideLoadingBar();
 #endif
-            return RETURN_ERROR;
-        }
+        return RETURN_ERROR;
     }
 
     LONG sent = useSSL ? SSL_write(ssl, writeBuffer, strlen(writeBuffer))
@@ -6808,15 +6971,11 @@ APTR postTextToSpeechRequestToOpenAI(
 
     updateStatusBar(STRING_CONNECTING, yellowPen);
     UBYTE connectionRetryCount = 0;
-    while (createSSLConnection(host, port, useSSL, useProxy, proxyHost,
-                               proxyPort, proxyUsesSSL, proxyRequiresAuth,
-                               proxyUsername, proxyPassword) == RETURN_ERROR) {
-        if (connectionRetryCount++ >= MAX_CONNECTION_RETRIES) {
-            displayError(STRING_ERROR_CONNECTING_MAX_RETRIES);
-            return NULL;
-        }
+    if (openAIConnectShouldAbort(openAIConnectWithRetries(
+            host, port, useSSL, useProxy, proxyHost, proxyPort, proxyUsesSSL,
+            proxyRequiresAuth, proxyUsername, proxyPassword))) {
+        return NULL;
     }
-    connectionRetryCount = 0;
 
     // Allocate a buffer for the audio data. This buffer will be resized if
     // needed
@@ -7538,6 +7697,13 @@ void closeOpenAIConnector() {
     }
 #endif
 
+#if defined(__MORPHOS__)
+    if (SocketBase) {
+        CloseLibrary(SocketBase);
+        SocketBase = NULL;
+    }
+#endif
+
     sock = -1;
 
     FreeVec(writeBuffer);
@@ -7619,14 +7785,10 @@ APTR postTextToSpeechRequestToElevenLabs(
     *audioLength = 0;
 
     updateStatusBar(STRING_CONNECTING, yellowPen);
-    UBYTE connectionRetryCount = 0;
-    while (createSSLConnection(host, port, useSSL, useProxy, proxyHost,
-                               proxyPort, proxyUsesSSL, proxyRequiresAuth,
-                               proxyUsername, proxyPassword) == RETURN_ERROR) {
-        if (connectionRetryCount++ >= MAX_CONNECTION_RETRIES) {
-            displayError(STRING_ERROR_CONNECTING_MAX_RETRIES);
-            return NULL;
-        }
+    if (openAIConnectShouldAbort(openAIConnectWithRetries(
+            host, port, useSSL, useProxy, proxyHost, proxyPort, proxyUsesSSL,
+            proxyRequiresAuth, proxyUsername, proxyPassword))) {
+        return NULL;
     }
 
     /* Allocate buffer for audio data */
@@ -8199,14 +8361,10 @@ APTR postTextToSpeechRequestToXAI(
     }
 
     updateStatusBar(STRING_CONNECTING, yellowPen);
-    UBYTE connectionRetryCount = 0;
-    while (createSSLConnection(host, port, useSSL, useProxy, proxyHost,
-                               proxyPort, proxyUsesSSL, proxyRequiresAuth,
-                               proxyUsername, proxyPassword) == RETURN_ERROR) {
-        if (connectionRetryCount++ >= MAX_CONNECTION_RETRIES) {
-            displayError(STRING_ERROR_CONNECTING_MAX_RETRIES);
-            return NULL;
-        }
+    if (openAIConnectShouldAbort(openAIConnectWithRetries(
+            host, port, useSSL, useProxy, proxyHost, proxyPort, proxyUsesSSL,
+            proxyRequiresAuth, proxyUsername, proxyPassword))) {
+        return NULL;
     }
 
     ULONG audioBufferSize = AUDIO_BUFFER_SIZE;
@@ -8884,15 +9042,12 @@ openVoxPostJson(CONST_STRPTR host, UWORD port, BOOL useSSL,
              requestTarget, host, (unsigned int)port, apiAuthHeader,
              proxyAuthHeader, (ULONG)strlen(jsonBody), jsonBody);
 
-    UBYTE connectionRetryCount = 0;
     updateStatusBar(STRING_CONNECTING, yellowPen);
-    while (createSSLConnection(host, port, useSSL, useProxy, proxyHost,
-                               proxyPort, proxyUsesSSL, proxyRequiresAuth,
-                               proxyUsername, proxyPassword) == RETURN_ERROR) {
-        if (connectionRetryCount++ >= MAX_CONNECTION_RETRIES) {
-            FreeVec(request);
-            return NULL;
-        }
+    if (openAIConnectShouldAbort(openAIConnectWithRetries(
+            host, port, useSSL, useProxy, proxyHost, proxyPort, proxyUsesSSL,
+            proxyRequiresAuth, proxyUsername, proxyPassword))) {
+        FreeVec(request);
+        return NULL;
     }
 
     ULONG sent = 0;
@@ -9433,8 +9588,6 @@ makeHttpsGetRequest(CONST_STRPTR host, UWORD port, BOOL useSSL,
                     BOOL proxyRequiresAuth, CONST_STRPTR proxyUsername,
                     CONST_STRPTR proxyPassword) {
 
-    UBYTE connectionRetryCount = 0;
-
     if (port == 0) {
         port = 443;
     }
@@ -9507,16 +9660,13 @@ makeHttpsGetRequest(CONST_STRPTR host, UWORD port, BOOL useSSL,
 #endif
 
     updateStatusBar(STRING_CONNECTING, yellowPen);
-    while (createSSLConnection(host, port, useSSL, useProxy, proxyHost,
-                               proxyPort, proxyUsesSSL, proxyRequiresAuth,
-                               proxyUsername, proxyPassword) == RETURN_ERROR) {
-        if (connectionRetryCount++ >= MAX_CONNECTION_RETRIES) {
-            displayError(STRING_ERROR_CONNECTING_MAX_RETRIES);
+    if (openAIConnectShouldAbort(openAIConnectWithRetries(
+            host, port, useSSL, useProxy, proxyHost, proxyPort, proxyUsesSSL,
+            proxyRequiresAuth, proxyUsername, proxyPassword))) {
 #ifndef DAEMON
-            hideLoadingBar();
+        hideLoadingBar();
 #endif
-            return NULL;
-        }
+        return NULL;
     }
 
     updateStatusBar(STRING_SENDING_REQUEST, yellowPen);
@@ -9630,7 +9780,6 @@ struct json_object *postToolResultsToOpenAI(
     BOOL codeInterpreterEnabled, CONST_STRPTR apiEndpointUrl,
     AuthorizationType authorizationType, CONST_STRPTR customHeaders) {
 
-    UBYTE connectionRetryCount = 0;
     if (host == NULL || strlen(host) == 0) {
         displayError("Host not specified");
         return NULL;
@@ -9810,14 +9959,10 @@ struct json_object *postToolResultsToOpenAI(
     FreeVec(authHeader);
 
     /* Connect and send */
-    updateStatusBar(STRING_CONNECTING, yellowPen);
-    while (createSSLConnection(host, port, useSSL, useProxy, proxyHost,
-                               proxyPort, proxyUsesSSL, proxyRequiresAuth,
-                               proxyUsername, proxyPassword) == RETURN_ERROR) {
-        if (connectionRetryCount++ >= MAX_CONNECTION_RETRIES) {
-            displayError(STRING_ERROR_CONNECTING_MAX_RETRIES);
-            return NULL;
-        }
+    if (openAIConnectShouldAbort(openAIConnectWithRetries(
+            host, port, useSSL, useProxy, proxyHost, proxyPort, proxyUsesSSL,
+            proxyRequiresAuth, proxyUsername, proxyPassword))) {
+        return NULL;
     }
 
     updateStatusBar(STRING_SENDING_REQUEST, yellowPen);

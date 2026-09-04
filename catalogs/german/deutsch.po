@@ -1937,138 +1937,7 @@ msgctxt "STRING_XAI_AUTO_INSERT_SPEECH_TAGS (362//)"
 msgid "Auto-insert speech tags into LLM replies"
 msgstr "Sprach-Tags automatisch in LLM-Antworten einfügen"
 
-#: src/speech.c
-msgctxt "STRING_ERROR_SPEECH_NOT_INITIALIZED (402//)"
-msgid "Speech is not available. The speech device failed to initialize."
-msgstr ""
-"Sprachausgabe ist nicht verfügbar. Das Sprachgerät konnte nicht "
-"initialisiert werden."
-
-#: src/ARexx.c
-msgctxt "STRING_ERROR_REXX_SPEAK_FAILED (403//)"
-msgid "SPEAKTEXT failed. See the error requester for details."
-msgstr ""
-"SPEAKTEXT ist fehlgeschlagen. Weitere Details finden Sie im Fehlerfenster."
-
-#: src/MainWindow.c
-msgctxt "STRING_ATTACH_FILES (365//)"
-msgid "Attach files..."
-msgstr "Attach files..."
-
-#: src/MainWindow.c
-msgctxt "STRING_CLEAR_ATTACHMENTS (366//)"
-msgid "Clear"
-msgstr "Clear"
-
-#: src/MainWindow.c
-msgctxt "STRING_NO_FILES_ATTACHED (367//)"
-msgid "No files attached"
-msgstr "No files attached"
-
-#: src/MainWindow.c
-msgctxt "STRING_FILES_ATTACHED_FORMAT (368//)"
-msgid "%lu file(s) attached"
-msgstr "%lu file(s) attached"
-
-#: src/MainWindow.c
-msgctxt "STRING_SAVE_RESPONSE_FILES (369//)"
-msgid "Save received files..."
-msgstr "Save received files..."
-
-#: src/MainWindow.c
-msgctxt "STRING_RESPONSE_FILES_SAVED_FORMAT (370//)"
-msgid "%lu received file(s) saved"
-msgstr "%lu received file(s) saved"
-
-#: src/MainWindow.c
-msgctxt "STRING_ATTACHED_FILES_PREFIX (371//)"
-msgid "Attached files: "
-msgstr "Attached files: "
-
-#: src/MainWindow.c
-msgctxt "STRING_RECEIVED_FILES_PREFIX (372//)"
-msgid "Received files: "
-msgstr "Received files: "
-
-#: src/MainWindow.c
-msgctxt "STRING_ERROR_MESSAGE_OR_ATTACHMENT_REQUIRED (373//)"
-msgid "Enter a message or attach at least one file."
-msgstr "Enter a message or attach at least one file."
-
-#: src/openai.c
-msgctxt "STRING_ERROR_ATTACHMENT_FILE_NOT_FOUND (374//)"
-msgid "An attached file could not be found or opened."
-msgstr "An attached file could not be found or opened."
-
-#: src/openai.c
-msgctxt "STRING_ERROR_ATTACHMENT_TOO_LARGE (375//)"
-msgid "Attachments are limited to 8 MB per file and 16 MB per request."
-msgstr "Attachments are limited to 8 MB per file and 16 MB per request."
-
-#: src/openai.c
-msgctxt "STRING_ERROR_ATTACHMENT_ENCODE (376//)"
-msgid "Could not encode an attached file."
-msgstr "Could not encode an attached file."
-
-#: src/openai.c
-msgctxt "STRING_ERROR_RECEIVED_FILE_DOWNLOAD (377//)"
-msgid "Could not download a file returned by the LLM."
-msgstr "Could not download a file returned by the LLM."
-
-#: src/openai.c
-msgctxt "STRING_ENCODING_ATTACHMENT_FORMAT (378//)"
-msgid "Encoding attachment %lu of %lu..."
-msgstr "Encoding attachment %lu of %lu..."
-
-#: src/openai.c
-msgctxt "STRING_PREPARING_REQUEST (379//)"
-msgid "Preparing request..."
-msgstr "Preparing request..."
-
-#: src/openai.c
-msgctxt "STRING_UPLOADING_REQUEST_FORMAT (380//)"
-msgid "Uploading request: %lu%%"
-msgstr "Uploading request: %lu%%"
-
-#: src/openai.c
-msgctxt "STRING_WAITING_FOR_RESPONSE (381//)"
-msgid "Upload complete. Waiting for response..."
-msgstr "Upload complete. Waiting for response..."
-
-#: src/CustomServerSettingsRequesterWindow.c
-msgctxt "STRING_CODE_INTERPRETER (382//)"
-msgid "Code Interpreter"
-msgstr "Code-Interpreter"
-
-#: src/AboutAmigaGPTWindow.c:111
-#, fuzzy
-msgctxt "STRING_ABOUT_WINDOW_OBLIGEMENT (383//)"
-msgid ""
-"for covering AmigaGPT for the french Amiga community and interviewing me"
-msgstr "für die Rezension von AmigaGPT und das Interview mit mir in Ausgabe 14"
-
-#: src/CustomServerSettingsRequesterWindow.c
-msgctxt "STRING_CHAT_PROVIDER_SETTINGS_TITLE (384//)"
-msgid "Chat Provider Settings"
-msgstr "Einstellungen für Chat-Anbieter"
-
-#: src/CustomServerSettingsRequesterWindow.c
-msgctxt "STRING_IMAGE_PROVIDER_SETTINGS_TITLE (385//)"
-msgid "Image Provider Settings"
-msgstr "Einstellungen für Bild-Anbieter"
-
-#: src/SpeechProviderSettingsRequesterWindow.c
-msgctxt "STRING_SPEECH_PROVIDER_SETTINGS_TITLE (386//)"
-msgid "Speech Provider Settings"
-msgstr "Einstellungen für Sprachanbieter"
-
-#~ msgctxt "STRING_MENU_OPENAI_VOICE (133//)"
-#~ msgid "OpenAI Voice"
-#~ msgstr "OpenAI Stimme"
-
-#~ msgctxt "STRING_MENU_SPEECH_OPENAI_MODEL (140//)"
-#~ msgid "OpenAI Speech Model"
-#~ msgstr "OpenAI-Sprachmodell"
+#: src/menu.c
 msgctxt "STRING_MENU_FIND (363//)"
 msgid "Find..."
 msgstr "Suchen..."
@@ -2113,6 +1982,7 @@ msgctxt "STRING_CHAT_USER_NEXT (371//)"
 msgid "Next question"
 msgstr "Nächste Frage"
 
+#: src/menu.c
 msgctxt "STRING_MENU_MARKDOWN_FORMATTING (372//)"
 msgid "Markdown formatting"
 msgstr "Markdown-Formatierung"
@@ -2149,59 +2019,110 @@ msgstr "Chat-Schrift vergrößern"
 
 #: src/menu.c
 msgctxt "STRING_MENU_CHAT_FONT_SMALLER (379//)"
+msgid "Decrease chat font size"
+msgstr "Chat-Schrift verkleinern"
+
+#: src/CodeBlocksViewer.c
 msgctxt "STRING_ERROR_CLIPBOARD_LIB_OPEN (380//)"
 msgid "Could not open clipboard.library."
-msgstr "Could not open clipboard.library."
+msgstr "clipboard.library konnte nicht geöffnet werden."
 
 #: src/CodeBlocksViewer.c
 msgctxt "STRING_ERROR_CLIPBOARD_COPY (381//)"
 msgid "Could not copy the active code block to the clipboard."
-msgstr "Could not copy the active code block to the clipboard."
+msgstr ""
+"Der aktive Codeblock konnte nicht in die Zwischenablage kopiert "
+"werden."
 
 #: src/menu.c
 msgctxt "STRING_MENU_COPY_CODEBLOCK (382//)"
 msgid "Copy (UTF-8)"
-msgstr "Copy (UTF-8)"
+msgstr "Kopieren (UTF-8)"
 
 #: src/CodeBlocksViewer.c
 msgctxt "STRING_MENU_COPY_CODEBLOCK_SYSTEM (383//)"
 msgid "Copy (system charset)"
-msgstr "Copy (system charset)"
+msgstr "Kopieren (Systemzeichensatz)"
 
 #: src/CodeBlocksViewer.c
 msgctxt "STRING_MENU_SAVE_CODEBLOCK_UTF8 (384//)"
 msgid "Save (UTF-8)..."
-msgstr "Save (UTF-8)..."
+msgstr "Speichern (UTF-8)..."
 
 #: src/CodeBlocksViewer.c
 msgctxt "STRING_MENU_SAVE_CODEBLOCK_SYSTEM (385//)"
 msgid "Save (system charset)..."
-msgstr "Save (system charset)..."
+msgstr "Speichern (Systemzeichensatz)..."
 
 #: src/CodeBlocksViewer.c
 msgctxt "STRING_SAVE_CODEBLOCK (386//)"
 msgid "Save code block"
-msgstr "Save code block"
+msgstr "Codeblock speichern"
 
 #: src/CodeBlocksViewer.c
 msgctxt "STRING_ERROR_CODEBLOCK_SAVE (387//)"
 msgid "Could not save the code block."
-msgstr "Could not save the code block."
+msgstr "Der Codeblock konnte nicht gespeichert werden."
 
 #: src/CodeBlocksViewer.c
 msgctxt "STRING_ERROR_NO_ACTIVE_CODEBLOCK (388//)"
+msgid "No code block is selected."
+msgstr "Es ist kein Codeblock ausgewählt."
+
+#: src/MainWindow.c
 msgctxt "STRING_CHAT_RESPONSE_PARTIAL (389//)"
 msgid "Response incomplete (connection ended early)."
-msgstr "Response incomplete (connection ended early)."
+msgstr "Antwort unvollständig (Verbindung vorzeitig beendet)."
 
 #: src/MainWindow.c
 msgctxt "STRING_CHAT_STREAM_TRUNCATED (390//)"
+msgid "Response truncated (stream buffer limit reached)."
+msgstr "Antwort abgeschnitten (Stream-Pufferlimit erreicht)."
 
 #: src/codefence.c
 msgctxt "STRING_CHAT_CODEBLOCK_PLACEHOLDER (391//)"
 msgid "[Codeblock %ld]\n"
 msgstr "[Codeblock %ld]\n"
 
+#: src/CustomServerSettingsRequesterWindow.c:11
+msgctxt "STRING_ERROR_CUSTOM_SERVER_SETTINGS (392//)"
+msgid "Failed to create custom server settings window"
+msgstr "Fenster für Anbieter-Einstellungen konnte nicht erstellt werden"
+
+#: src/ElevenLabsSettingsRequesterWindow.c:111
+msgctxt "STRING_ERROR_ELEVENLABS_API_KEY_REQUIRED (393//)"
+msgid "Please enter your ElevenLabs API key first"
+msgstr "Bitte geben Sie zuerst Ihren ElevenLabs-API-Schlüssel ein"
+
+#: src/gui.c
+msgctxt "STRING_ERROR_NO_ACTIVE_CONVERSATION (394//)"
+msgid "No active conversation. Open or start a chat first."
+msgstr "Keine aktive Konversation. Öffnen oder starten Sie zuerst einen Chat."
+
+#: src/gui.c
+msgctxt "STRING_ERROR_NO_CODEBLOCKS_IN_CHAT (395//)"
+msgid "No fenced code blocks in this conversation yet."
+msgstr "In dieser Konversation gibt es noch keine Codeblöcke."
+
+#: src/menu.c
+msgctxt "STRING_MENU_CHAT_FIXED_WIDTH_FONT (396//)"
+msgid "Monospace font (chat output)"
+msgstr "Monospace-Schrift (Chat-Ausgabe)"
+
+#: src/menu.c:146
+msgctxt "STRING_MENU_CUSTOM_SERVER (397//)"
+msgid "Custom Server"
+msgstr "Eigener Anbieter"
+
+#: src/menu.c:148
+msgctxt "STRING_MENU_CUSTOM_SERVER_SETTINGS (398//)"
+msgid "Custom Server Settings"
+msgstr "Einstellungen für eigenen Anbieter"
+
+#: src/gui.c
+msgctxt "STRING_MENU_VIEW_CODEBLOCKS (399//)"
+msgid "View code blocks..."
+msgstr "Codeblöcke anzeigen..."
 
 #: src/gui.c
 msgctxt "STRING_ERROR_TTENGINE_LIB_OPEN (400//)"
@@ -2209,5 +2130,151 @@ msgid ""
 "Could not open ttengine.library. Install TTEngine (FreeType fonts) for "
 "Scintilla UTF-8 display."
 msgstr ""
-"Could not open ttengine.library. Install TTEngine (FreeType fonts) for "
-"Scintilla UTF-8 display."
+"ttengine.library konnte nicht geöffnet werden. Installieren Sie "
+"TTEngine (FreeType-Schriften) für die Scintilla-UTF-8-Anzeige."
+
+#: src/speech.c
+msgctxt "STRING_ERROR_SPEECH_NOT_INITIALIZED (402//)"
+msgid "Speech is not available. The speech device failed to initialize."
+msgstr ""
+"Sprachausgabe ist nicht verfügbar. Das Sprachgerät konnte nicht "
+"initialisiert werden."
+
+#: src/ARexx.c
+msgctxt "STRING_ERROR_REXX_SPEAK_FAILED (403//)"
+msgid "SPEAKTEXT failed. See the error requester for details."
+msgstr ""
+"SPEAKTEXT ist fehlgeschlagen. Weitere Details finden Sie im Fehlerfenster."
+
+#: src/MainWindow.c
+msgctxt "STRING_ATTACH_FILES (404//)"
+msgid "Attach files..."
+msgstr "Dateien anhängen..."
+
+#: src/MainWindow.c
+msgctxt "STRING_CLEAR_ATTACHMENTS (405//)"
+msgid "Clear"
+msgstr "Leeren"
+
+#: src/MainWindow.c
+msgctxt "STRING_NO_FILES_ATTACHED (406//)"
+msgid "No files attached"
+msgstr "Keine Dateien angehängt"
+
+#: src/MainWindow.c
+msgctxt "STRING_FILES_ATTACHED_FORMAT (407//)"
+msgid "%lu file(s) attached"
+msgstr "%lu Datei(en) angehängt"
+
+#: src/MainWindow.c
+msgctxt "STRING_SAVE_RESPONSE_FILES (408//)"
+msgid "Save received files..."
+msgstr "Empfangene Dateien speichern..."
+
+#: src/MainWindow.c
+msgctxt "STRING_RESPONSE_FILES_SAVED_FORMAT (409//)"
+msgid "%lu received file(s) saved"
+msgstr "%lu empfangene Datei(en) gespeichert"
+
+#: src/MainWindow.c
+msgctxt "STRING_ATTACHED_FILES_PREFIX (410//)"
+msgid "Attached files: "
+msgstr "Angehängte Dateien: "
+
+#: src/MainWindow.c
+msgctxt "STRING_RECEIVED_FILES_PREFIX (411//)"
+msgid "Received files: "
+msgstr "Empfangene Dateien: "
+
+#: src/MainWindow.c
+msgctxt "STRING_ERROR_MESSAGE_OR_ATTACHMENT_REQUIRED (412//)"
+msgid "Enter a message or attach at least one file."
+msgstr "Geben Sie eine Nachricht ein oder hängen Sie mindestens eine Datei an."
+
+#: src/openai.c
+msgctxt "STRING_ERROR_ATTACHMENT_FILE_NOT_FOUND (413//)"
+msgid "An attached file could not be found or opened."
+msgstr "Eine angehängte Datei konnte nicht gefunden oder geöffnet werden."
+
+#: src/openai.c
+msgctxt "STRING_ERROR_ATTACHMENT_TOO_LARGE (414//)"
+msgid "Attachments are limited to 8 MB per file and 16 MB per request."
+msgstr "Anhänge sind auf 8 MB pro Datei und 16 MB pro Anfrage begrenzt."
+
+#: src/openai.c
+msgctxt "STRING_ERROR_ATTACHMENT_ENCODE (415//)"
+msgid "Could not encode an attached file."
+msgstr "Eine angehängte Datei konnte nicht kodiert werden."
+
+#: src/openai.c
+msgctxt "STRING_ERROR_RECEIVED_FILE_DOWNLOAD (416//)"
+msgid "Could not download a file returned by the LLM."
+msgstr "Eine vom LLM zurückgegebene Datei konnte nicht heruntergeladen werden."
+
+#: src/openai.c
+msgctxt "STRING_ENCODING_ATTACHMENT_FORMAT (417//)"
+msgid "Encoding attachment %lu of %lu..."
+msgstr "Anhang %lu von %lu wird kodiert..."
+
+#: src/openai.c
+msgctxt "STRING_PREPARING_REQUEST (418//)"
+msgid "Preparing request..."
+msgstr "Anfrage wird vorbereitet..."
+
+#: src/openai.c
+msgctxt "STRING_UPLOADING_REQUEST_FORMAT (419//)"
+msgid "Uploading request: %lu%%"
+msgstr "Anfrage wird hochgeladen: %lu%%"
+
+#: src/openai.c
+msgctxt "STRING_WAITING_FOR_RESPONSE (420//)"
+msgid "Upload complete. Waiting for response..."
+msgstr "Upload abgeschlossen. Warte auf Antwort..."
+
+#: src/CustomServerSettingsRequesterWindow.c
+msgctxt "STRING_CODE_INTERPRETER (421//)"
+msgid "Code Interpreter"
+msgstr "Code-Interpreter"
+
+#: src/AboutAmigaGPTWindow.c:111
+msgctxt "STRING_ABOUT_WINDOW_OBLIGEMENT (422//)"
+msgid ""
+"for covering AmigaGPT for the french Amiga community and interviewing me"
+msgstr "für die Rezension von AmigaGPT und das Interview mit mir in Ausgabe 14"
+
+#: src/CustomServerSettingsRequesterWindow.c
+msgctxt "STRING_CHAT_PROVIDER_SETTINGS_TITLE (423//)"
+msgid "Chat Provider Settings"
+msgstr "Einstellungen für Chat-Anbieter"
+
+#: src/CustomServerSettingsRequesterWindow.c
+msgctxt "STRING_IMAGE_PROVIDER_SETTINGS_TITLE (424//)"
+msgid "Image Provider Settings"
+msgstr "Einstellungen für Bild-Anbieter"
+
+#: src/SpeechProviderSettingsRequesterWindow.c
+msgctxt "STRING_SPEECH_PROVIDER_SETTINGS_TITLE (425//)"
+msgid "Speech Provider Settings"
+msgstr "Einstellungen für Sprachanbieter"
+
+#: src/openai.c
+msgctxt "STRING_ERROR_SSL_HANDSHAKE_TIMEOUT (426//)"
+msgid "SSL: handshake timeout"
+msgstr "SSL: Handshake-Timeout"
+
+#: src/openai.c
+msgctxt "STRING_ERROR_SSL_WANT_READ_TIMEOUT (427//)"
+msgid "SSL: timeout waiting for stream data (WANT_READ)"
+msgstr "SSL: Timeout beim Warten auf Stream-Daten (WANT_READ)"
+
+#~ msgctxt "STRING_CLEAR_ATTACHMENTS (366//)"
+#~ msgid "Clear"
+#~ msgstr "Clear"
+
+#~ msgctxt "STRING_MENU_OPENAI_VOICE (133//)"
+#~ msgid "OpenAI Voice"
+#~ msgstr "OpenAI Stimme"
+
+#~ msgctxt "STRING_MENU_SPEECH_OPENAI_MODEL (140//)"
+#~ msgid "OpenAI Speech Model"
+#~ msgstr "OpenAI-Sprachmodell"

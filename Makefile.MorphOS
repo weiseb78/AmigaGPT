@@ -87,7 +87,8 @@ endif
 
 CPPFLAGS= $(CCFLAGS) -fno-rtti -fcoroutines -fno-use-cxa-atexit
 ASFLAGS = -Wa,-g,--register-prefix-optional,-I$(SDKDIR),-I$(NETINCDIR),-I$(INCDIR),-D
-LDFLAGS =  -Wl,-Map=$(EXECUTABLE_OUT).map,-L$(LIBDIR),-L$(SDKLIBDIR),-lm,-ljson-c,-lmagic,-lssl,-lcrypto,-ldebug,-lpthread,-L$(GCCLIBDIR),-latomic
+# MorphOS: openssl3.library via shared stubs; app must OpenLibrary(bsdsocket) for libnix DNS.
+LDFLAGS =  -Wl,-Map=$(EXECUTABLE_OUT).map,-L$(LIBDIR),-L$(SDKLIBDIR),-lm,-ljson-c,-lmagic,-lssl_shared,-lcrypto_shared,-ldebug,-lpthread,-L$(GCCLIBDIR),-latomic
 VASMFLAGS = -Fhunk -opt-fconst -nowarn=62 -dwarf=3 -quiet -x -I. -D__MORPHOS__ -I$(INCDIR) -I$(NETINCDIR) -I$(SDKDIR)
 
 .PHONY: all clean copy_bundle_files catalog catalog_definition daemon version-bump ship
@@ -129,9 +130,11 @@ catalog:
 	@$(FLEXCAT) $(CATALOG_DEFINITION) $(SOURCE_DIR)/$(PROGRAM_NAME)_cat.c=C_c.sd
 
 	$(info Updating catalog translations)
+	@# FlexCat ignores gettext "#, fuzzy" -- never invent guessed msgstr.
 	@for catalog_translation in $(catalog_translations); do \
-		msgmerge -U $$catalog_translation $(CATALOG_DEFINITION)|| true; \
+		msgmerge -U --no-fuzzy-matching --backup=none $$catalog_translation $(CATALOG_DEFINITION)|| true; \
 	done
+	@bash tools/flexcat-po-prepare.sh $(catalog_translations)
 
 	$(info Compiling catalogs $(catalog_translations))
 	@for catalog_translation in $(catalog_translations); do \
