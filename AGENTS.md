@@ -21,6 +21,7 @@ This repository is **weiseb78/AmigaGPT** — a fork of [sacredbanana/AmigaGPT](h
   - xAI: `docs.x.ai`
 
 - **ISO 8859-1 Amiga Latin-1 files (HARD RULE)** — Read and follow **[AMIGA-LATIN1-FILES.md](AMIGA-LATIN1-FILES.md)** before and after editing any covered file. Claude Code also loads `.claude/rules/amiga-latin1-files.md` when touching those paths. Applies to `bundle/AmigaGPT/Install-AmigaGPT`, `AmigaGPT.readme`, `AmigaGPT.guide`, all `*.c` under `src/`, and all `*.rexx` under `bundle/` and `assets/`.
+- **FlexCat catalogs (HARD RULE)** — FlexCat ignores gettext `#, fuzzy` and would ship bad `msgstr` values. Never leave fuzzy entries in `catalogs/german/deutsch.po` (`tools/flexcat-po-prepare.sh` hard-fails). Only actively translate German; other `.po` files stay `msgstr` = `msgid`. Cursor rule: `.cursor/rules/flexcat-catalog-policy.mdc`. Details: `docs/README.md` § Katalog.
 
 ## Git (required)
 

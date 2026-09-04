@@ -130,9 +130,11 @@ catalog:
 	@$(FLEXCAT) $(CATALOG_DEFINITION) $(SOURCE_DIR)/$(PROGRAM_NAME)_cat.c=C_c.sd
 
 	$(info Updating catalog translations)
+	@# FlexCat ignores gettext "#, fuzzy" ? never invent guessed msgstr.
 	@for catalog_translation in $(catalog_translations); do \
-		msgmerge -U $$catalog_translation $(CATALOG_DEFINITION)|| true; \
+		msgmerge -U --no-fuzzy-matching --backup=none $$catalog_translation $(CATALOG_DEFINITION)|| true; \
 	done
+	@bash tools/flexcat-po-prepare.sh $(catalog_translations)
 
 	$(info Compiling catalogs $(catalog_translations))
 	@for catalog_translation in $(catalog_translations); do \

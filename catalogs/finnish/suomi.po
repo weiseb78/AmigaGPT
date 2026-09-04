@@ -2052,16 +2052,14 @@ msgid "[Codeblock %ld]\n"
 msgstr "[Codeblock %ld]\n"
 
 #: src/CustomServerSettingsRequesterWindow.c:11
-#, fuzzy
 msgctxt "STRING_ERROR_CUSTOM_SERVER_SETTINGS (392//)"
 msgid "Failed to create custom server settings window"
-msgstr "Palveluntarjoajan asetusten ikkunan luonti epäonnistui"
+msgstr "Failed to create custom server settings window"
 
 #: src/ElevenLabsSettingsRequesterWindow.c:111
-#, fuzzy
 msgctxt "STRING_ERROR_ELEVENLABS_API_KEY_REQUIRED (393//)"
 msgid "Please enter your ElevenLabs API key first"
-msgstr "Anna API-avaimesi"
+msgstr "Please enter your ElevenLabs API key first"
 
 #: src/gui.c
 msgctxt "STRING_ERROR_NO_ACTIVE_CONVERSATION (394//)"
@@ -2079,22 +2077,19 @@ msgid "Monospace font (chat output)"
 msgstr "Monospace font (chat output)"
 
 #: src/menu.c:146
-#, fuzzy
 msgctxt "STRING_MENU_CUSTOM_SERVER (397//)"
 msgid "Custom Server"
-msgstr "Mukautettu palveluntarjoaja"
+msgstr "Custom Server"
 
 #: src/menu.c:148
-#, fuzzy
 msgctxt "STRING_MENU_CUSTOM_SERVER_SETTINGS (398//)"
 msgid "Custom Server Settings"
-msgstr "Chat-palveluntarjoajan asetukset"
+msgstr "Custom Server Settings"
 
 #: src/gui.c
-#, fuzzy
 msgctxt "STRING_MENU_VIEW_CODEBLOCKS (399//)"
 msgid "View code blocks..."
-msgstr "Save code block"
+msgstr "View code blocks..."
 
 #: src/gui.c
 msgctxt "STRING_ERROR_TTENGINE_LIB_OPEN (400//)"
@@ -2116,137 +2111,116 @@ msgid "SPEAKTEXT failed. See the error requester for details."
 msgstr "SPEAKTEXT epäonnistui. Katso lisätietoja virheikkunasta."
 
 #: src/MainWindow.c
-#, fuzzy
 msgctxt "STRING_ATTACH_FILES (404//)"
 msgid "Attach files..."
 msgstr "Attach files..."
 
 #: src/MainWindow.c
-#, fuzzy
 msgctxt "STRING_CLEAR_ATTACHMENTS (405//)"
 msgid "Clear"
-msgstr "Selkeä"
+msgstr "Clear"
 
 #: src/MainWindow.c
-#, fuzzy
 msgctxt "STRING_NO_FILES_ATTACHED (406//)"
 msgid "No files attached"
 msgstr "No files attached"
 
 #: src/MainWindow.c
-#, fuzzy
 msgctxt "STRING_FILES_ATTACHED_FORMAT (407//)"
 msgid "%lu file(s) attached"
 msgstr "%lu file(s) attached"
 
 #: src/MainWindow.c
-#, fuzzy
 msgctxt "STRING_SAVE_RESPONSE_FILES (408//)"
 msgid "Save received files..."
 msgstr "Save received files..."
 
 #: src/MainWindow.c
-#, fuzzy
 msgctxt "STRING_RESPONSE_FILES_SAVED_FORMAT (409//)"
 msgid "%lu received file(s) saved"
 msgstr "%lu received file(s) saved"
 
 #: src/MainWindow.c
-#, fuzzy
 msgctxt "STRING_ATTACHED_FILES_PREFIX (410//)"
 msgid "Attached files: "
 msgstr "Attached files: "
 
 #: src/MainWindow.c
-#, fuzzy
 msgctxt "STRING_RECEIVED_FILES_PREFIX (411//)"
 msgid "Received files: "
 msgstr "Received files: "
 
 #: src/MainWindow.c
-#, fuzzy
 msgctxt "STRING_ERROR_MESSAGE_OR_ATTACHMENT_REQUIRED (412//)"
 msgid "Enter a message or attach at least one file."
 msgstr "Enter a message or attach at least one file."
 
 #: src/openai.c
-#, fuzzy
 msgctxt "STRING_ERROR_ATTACHMENT_FILE_NOT_FOUND (413//)"
 msgid "An attached file could not be found or opened."
 msgstr "An attached file could not be found or opened."
 
 #: src/openai.c
-#, fuzzy
 msgctxt "STRING_ERROR_ATTACHMENT_TOO_LARGE (414//)"
 msgid "Attachments are limited to 8 MB per file and 16 MB per request."
 msgstr "Attachments are limited to 8 MB per file and 16 MB per request."
 
 #: src/openai.c
-#, fuzzy
 msgctxt "STRING_ERROR_ATTACHMENT_ENCODE (415//)"
 msgid "Could not encode an attached file."
 msgstr "Could not encode an attached file."
 
 #: src/openai.c
-#, fuzzy
 msgctxt "STRING_ERROR_RECEIVED_FILE_DOWNLOAD (416//)"
 msgid "Could not download a file returned by the LLM."
 msgstr "Could not download a file returned by the LLM."
 
 #: src/openai.c
-#, fuzzy
 msgctxt "STRING_ENCODING_ATTACHMENT_FORMAT (417//)"
 msgid "Encoding attachment %lu of %lu..."
 msgstr "Encoding attachment %lu of %lu..."
 
 #: src/openai.c
-#, fuzzy
 msgctxt "STRING_PREPARING_REQUEST (418//)"
 msgid "Preparing request..."
 msgstr "Preparing request..."
 
 #: src/openai.c
-#, fuzzy
 msgctxt "STRING_UPLOADING_REQUEST_FORMAT (419//)"
 msgid "Uploading request: %lu%%"
 msgstr "Uploading request: %lu%%"
 
 #: src/openai.c
-#, fuzzy
 msgctxt "STRING_WAITING_FOR_RESPONSE (420//)"
 msgid "Upload complete. Waiting for response..."
 msgstr "Upload complete. Waiting for response..."
 
 #: src/CustomServerSettingsRequesterWindow.c
-#, fuzzy
 msgctxt "STRING_CODE_INTERPRETER (421//)"
 msgid "Code Interpreter"
-msgstr "Kooditulkki"
+msgstr "Code Interpreter"
 
 #: src/AboutAmigaGPTWindow.c:111
-#, fuzzy
 msgctxt "STRING_ABOUT_WINDOW_OBLIGEMENT (422//)"
 msgid ""
 "for covering AmigaGPT for the french Amiga community and interviewing me"
-msgstr "AmigaGPT:n arvioinnista ja minut haastattelusta numerossa 14"
+msgstr ""
+"for covering AmigaGPT for the french Amiga community and interviewing me"
 
 #: src/CustomServerSettingsRequesterWindow.c
-#, fuzzy
 msgctxt "STRING_CHAT_PROVIDER_SETTINGS_TITLE (423//)"
 msgid "Chat Provider Settings"
-msgstr "Chat-palveluntarjoajan asetukset"
+msgstr "Chat Provider Settings"
 
 #: src/CustomServerSettingsRequesterWindow.c
-#, fuzzy
 msgctxt "STRING_IMAGE_PROVIDER_SETTINGS_TITLE (424//)"
 msgid "Image Provider Settings"
-msgstr "Kuvapalveluntarjoajan asetukset"
+msgstr "Image Provider Settings"
 
 #: src/SpeechProviderSettingsRequesterWindow.c
-#, fuzzy
 msgctxt "STRING_SPEECH_PROVIDER_SETTINGS_TITLE (425//)"
 msgid "Speech Provider Settings"
-msgstr "Puhepalvelun asetukset"
+msgstr "Speech Provider Settings"
 
 #: src/openai.c
 msgctxt "STRING_ERROR_SSL_HANDSHAKE_TIMEOUT (426//)"
