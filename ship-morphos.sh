@@ -9,7 +9,15 @@ log() { printf '==> %s\n' "$*"; }
 log "flexcat: $FLEXCAT"
 
 MAKE_EXTRA=()
-if ! (touch "$ROOT/out/.write_test" 2>/dev/null && rm -f "$ROOT/out/.write_test"); then
+# Keep make EXECUTABLE_DIR and package AMIGAGPT_OUT_DIR in lockstep.
+# A stale AMIGAGPT_OUT_DIR from a previous shell used to package an old /tmp
+# binary while make linked into out/ (Cursor overlay) — About then showed the
+# wrong build.
+if [[ -n "${AMIGAGPT_OUT_DIR:-}" ]]; then
+  mkdir -p "$AMIGAGPT_OUT_DIR"
+  MAKE_EXTRA+=(EXECUTABLE_DIR="$AMIGAGPT_OUT_DIR")
+  log "AMIGAGPT_OUT_DIR=$AMIGAGPT_OUT_DIR (EXECUTABLE_DIR synced)"
+elif ! (touch "$ROOT/out/.write_test" 2>/dev/null && rm -f "$ROOT/out/.write_test"); then
   ALT_OUT="/tmp/amigagpt-morphos-out"
   mkdir -p "$ALT_OUT"
   log "out/ not writable (Cursor .cursorignore overlay) — using $ALT_OUT"
