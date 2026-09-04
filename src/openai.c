@@ -175,7 +175,9 @@ static void chatStreamNoteReadTimeout(UWORD responseIndex,
     if (responseIndex > 0 || readBufferLen > 0) {
         chatStreamTruncated = TRUE;
     } else {
-        displayError("SSL: timeout waiting for stream data (WANT_READ)");
+        /* msgctxt "STRING_ERROR_SSL_WANT_READ_TIMEOUT (427//)" */
+        /* msgid "SSL: timeout waiting for stream data (WANT_READ)" */
+        displayError(STRING_ERROR_SSL_WANT_READ_TIMEOUT);
     }
 }
 
@@ -1870,7 +1872,9 @@ static LONG sslConnectWithMuiPump(SSL *s) {
         elapsedSec++;
         if (elapsedSec >= SSL_HANDSHAKE_MAX_SECONDS) {
             streamLogApiError("ssl_connect", "handshake timeout");
-            displayError("SSL: handshake timeout");
+            /* msgctxt "STRING_ERROR_SSL_HANDSHAKE_TIMEOUT (426//)" */
+            /* msgid "SSL: handshake timeout" */
+            displayError(STRING_ERROR_SSL_HANDSHAKE_TIMEOUT);
             return -1;
         }
     }
