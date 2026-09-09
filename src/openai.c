@@ -19,6 +19,9 @@
 #include <sys/select.h>
 #include <sys/time.h>
 #include <sys/socket.h>
+#ifdef __MORPHOS__
+#include <sys/filio.h>
+#endif
 #include <dos/dostags.h>
 #include <dos/dosextens.h>
 #include <string.h>
@@ -37,8 +40,8 @@
 #define GEMINI_HOST "generativelanguage.googleapis.com"
 #define ANTHROPIC_HOST "api.anthropic.com"
 #define AUDIO_BUFFER_SIZE 4096
-#define MAX_CONNECTION_RETRIES 10
-/** Wait up to ~15 min for more TLS stream data (200 ms � 4500). */
+#define MAX_CONNECTION_RETRIES 3
+/** Wait up to ~15 min for more TLS stream data (200 ms x 4500). */
 #define SSL_STREAM_WAIT_US 200000
 #define SSL_STREAM_WAIT_MAX 4500
 #define MAX_ATTACHMENT_REQUEST_RETRIES 1
@@ -57,6 +60,8 @@
 #define CONNECT_RETRY_DELAY_TICKS 50
 /** TLS handshake budget (1 s WaitSelect slices + MUI pump). */
 #define SSL_HANDSHAKE_MAX_SECONDS 20
+/** TCP connect budget (1 s WaitSelect slices + MUI pump); MorphOS only. */
+#define TCP_CONNECT_MAX_SECONDS 45
 #define OPENAI_FILE_BOUNDARY "----AmigaGPTFormBoundary"
 
 #ifndef __MORPHOS__
@@ -218,7 +223,9 @@ static ULONG createSSLConnection(CONST_STRPTR host, UWORD port, BOOL useSSL,
 typedef enum {
     OPENAI_CONNECT_OK = 0,
     OPENAI_CONNECT_FAILED,
-    OPENAI_CONNECT_ABORTED
+    OPENAI_CONNECT_ABORTED,
+    /* Specific error already shown (e.g. bad proxy host); do not retry or re-prompt. */
+    OPENAI_CONNECT_FATAL
 } OpenAIConnectResult;
 
 static OpenAIConnectResult openAIConnectWithRetries(
@@ -1820,9 +1827,98 @@ static LONG waitForSocketWritable(void) {
 }
 
 /**
+ * MorphOS: non-blocking TCP connect with MUI pump + timeout.
+ * Returns 0 on success, -1 on error, -2 on user abort (Quit/Cancel).
+ * OS3/OS4 keep a plain blocking connect() (AmiSSL owns errno wiring).
+ **/
+static LONG connectSocketWithMuiPump(struct sockaddr_in *addr) {
+    LONG flag;
+    LONG rc;
+    LONG bsd_e;
+    ULONG elapsedSec = 0;
+    int soerr;
+    LONG soerrLen;
+
+    if (sock < 0 || addr == NULL)
+        return -1;
+
+#ifdef __MORPHOS__
+    flag = 1;
+    if (IoctlSocket(sock, FIONBIO, (char *)&flag) < 0) {
+        streamLogApiError("connect", "FIONBIO on failed");
+        return -1;
+    }
+
+    rc = connect(sock, (struct sockaddr *)addr, sizeof(*addr));
+    if (rc == 0) {
+        flag = 0;
+        IoctlSocket(sock, FIONBIO, (char *)&flag);
+        streamLogApiError("connect", "tcp connected");
+        return 0;
+    }
+
+    bsd_e = Errno();
+    if (bsd_e != EINPROGRESS && bsd_e != EWOULDBLOCK && bsd_e != EAGAIN &&
+        errno != EINPROGRESS && errno != EWOULDBLOCK && errno != EAGAIN) {
+        streamLogApiError("connect", "tcp connect failed");
+        flag = 0;
+        IoctlSocket(sock, FIONBIO, (char *)&flag);
+        return -1;
+    }
+
+    for (;;) {
+#ifndef DAEMON
+        if (openaiPumpMUIForNetwork(TRUE)) {
+            streamLogApiError("connect", "tcp connect aborted");
+            flag = 0;
+            IoctlSocket(sock, FIONBIO, (char *)&flag);
+            return -2;
+        }
+#endif
+        rc = waitForSocketWritable();
+        if (rc < 0) {
+            streamLogApiError("connect", "tcp connect WaitSelect failed");
+            flag = 0;
+            IoctlSocket(sock, FIONBIO, (char *)&flag);
+            return -1;
+        }
+        if (rc > 0) {
+            soerr = 0;
+            soerrLen = (LONG)sizeof(soerr);
+            if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &soerr, &soerrLen) < 0 ||
+                soerr != 0) {
+                streamLogApiError("connect", "tcp connect SO_ERROR");
+                flag = 0;
+                IoctlSocket(sock, FIONBIO, (char *)&flag);
+                return -1;
+            }
+            flag = 0;
+            IoctlSocket(sock, FIONBIO, (char *)&flag);
+            streamLogApiError("connect", "tcp connected");
+            return 0;
+        }
+
+        elapsedSec++;
+        if (elapsedSec >= TCP_CONNECT_MAX_SECONDS) {
+            streamLogApiError("connect", "tcp connect timeout");
+            flag = 0;
+            IoctlSocket(sock, FIONBIO, (char *)&flag);
+            return -1;
+        }
+    }
+#else
+    if (connect(sock, (struct sockaddr *)addr, sizeof(*addr)) < 0) {
+        streamLogApiError("connect", "tcp connect failed");
+        return -1;
+    }
+    streamLogApiError("connect", "tcp connected");
+    return 0;
+#endif
+}
+
+/**
  * TLS handshake without SSL_MODE_AUTO_RETRY so WANT_READ/WANT_WRITE return to
  * us. Pump MUI between WaitSelect slices; abort on quit/cancel or timeout.
- * Blocking tcp connect() stays as-is ? only the handshake is progressive.
  **/
 static LONG sslConnectWithMuiPump(SSL *s) {
     ULONG elapsedSec = 0;
@@ -1919,9 +2015,11 @@ static OpenAIConnectResult openAIConnectWithRetries(
 #endif
 
     for (;;) {
-        if (createSSLConnection(host, port, useSSL, useProxy, proxyHost,
+        ULONG connectRc =
+            createSSLConnection(host, port, useSSL, useProxy, proxyHost,
                                 proxyPort, proxyUsesSSL, proxyRequiresAuth,
-                                proxyUsername, proxyPassword) == RETURN_OK) {
+                                proxyUsername, proxyPassword);
+        if (connectRc == RETURN_OK) {
             return OPENAI_CONNECT_OK;
         }
 
@@ -1930,6 +2028,15 @@ static OpenAIConnectResult openAIConnectWithRetries(
             return OPENAI_CONNECT_ABORTED;
         }
 #endif
+
+        /* DNS / config errors already displayed -- do not retry 3-10 times. */
+        if (connectRc == RETURN_FAIL) {
+            return OPENAI_CONNECT_FATAL;
+        }
+        /* User quit/cancel during connect. */
+        if (connectRc == RETURN_WARN) {
+            return OPENAI_CONNECT_ABORTED;
+        }
 
         retry++;
         {
@@ -1949,7 +2056,8 @@ static OpenAIConnectResult openAIConnectWithRetries(
 static BOOL openAIConnectShouldAbort(OpenAIConnectResult result) {
     if (result == OPENAI_CONNECT_OK)
         return FALSE;
-    if (result != OPENAI_CONNECT_ABORTED)
+    /* FAILED: transient connect exhausted. FATAL/ABORTED: already handled. */
+    if (result == OPENAI_CONNECT_FAILED)
         displayError(STRING_ERROR_CONNECTING_MAX_RETRIES);
     return TRUE;
 }
@@ -3366,6 +3474,12 @@ LONG initOpenAIConnector() {
 #endif
 #endif
 
+
+#ifdef __MORPHOS__
+    /* bsdsocket Errno() vs C-errno: without this, FIONBIO connect sees stale errno=0. */
+    SetErrnoPtr(&errno, sizeof(errno));
+#endif
+
 #ifdef __AMIGAOS3__
     if ((AmiSSLMasterBase = OpenLibrary("amisslmaster.library",
                                         AMISSLMASTER_MIN_VERSION)) == NULL) {
@@ -3449,7 +3563,7 @@ static ULONG createSSLConnection(CONST_STRPTR host, UWORD port, BOOL useSSL,
         /* The following needs to be done once per socket */
         if ((ssl = SSL_new(ctx)) == NULL) {
             displayError(STRING_ERROR_SSL_HANDLE);
-            return RETURN_ERROR;
+            return RETURN_FAIL;
         }
     }
 
@@ -3467,7 +3581,7 @@ static ULONG createSSLConnection(CONST_STRPTR host, UWORD port, BOOL useSSL,
     } else {
         displayError(useProxy ? STRING_ERROR_PROXY_HOST : STRING_ERROR_HOST);
         closeActiveResponseConnection();
-        return RETURN_ERROR;
+        return RETURN_FAIL;
     }
 
     /* Create a socket and connect to the server */
@@ -3488,18 +3602,22 @@ static ULONG createSSLConnection(CONST_STRPTR host, UWORD port, BOOL useSSL,
             }
         }
 
-        if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-            streamLogApiError("connect", "tcp connect failed");
-            displayError(useProxy ? STRING_ERROR_CONNECTION_PROXY
-                                  : STRING_ERROR_CONNECTION);
-            closeActiveResponseConnection();
-            return RETURN_ERROR;
+        {
+            LONG connectRc = connectSocketWithMuiPump(&addr);
+            if (connectRc == -2) {
+                closeActiveResponseConnection();
+                return RETURN_WARN;
+            }
+            if (connectRc < 0) {
+                /* Retryable: no requester here -- avoids N dialogs in a row. */
+                closeActiveResponseConnection();
+                return RETURN_ERROR;
+            }
         }
-        streamLogApiError("connect", "tcp connected");
     } else {
         displayError(STRING_ERROR_SOCKET_CREATE);
         closeActiveResponseConnection();
-        return RETURN_ERROR;
+        return RETURN_FAIL;
     }
 
     if (useProxy && proxyUsesSSL) {
@@ -4182,7 +4300,7 @@ struct json_object **postChatMessageToOpenAI(
         struct MinNode *conversationNode = conversation->messages->mlh_Head;
 #ifdef __MORPHOS__
         /* MorphOS chat is UTF-8 (Scintilla). Do not inject the upstream
-         * Latin-1/Amiga-charset instruction — it makes models drop umlauts
+         * Latin-1/Amiga-charset instruction -- it makes models drop umlauts
          * and other Unicode that we intentionally support. */
         STRPTR systemInstructions =
             combineInstructionText(conversation->system, NULL);
