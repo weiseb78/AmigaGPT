@@ -55,7 +55,7 @@
 #define TCP_NODELAY 1
 #endif
 #define SOCKET_READ_WAIT_SECONDS 1
-#define SOCKET_READ_MAX_IDLE_SECONDS 180
+#define SOCKET_READ_MAX_IDLE_SECONDS 60
 /** Delay between createSSLConnection retries (MUI can pump in between). */
 #define CONNECT_RETRY_DELAY_TICKS 50
 /** TLS handshake budget (1 s WaitSelect slices + MUI pump). */
@@ -1764,7 +1764,7 @@ static LONG reconnectAndResendChatRequest(
             return -1;
         if (createSSLConnection(host, port, useSSL, useProxy, proxyHost,
                                 proxyPort, proxyUsesSSL, proxyRequiresAuth,
-                                proxyUsername, proxyPassword) == RETURN_ERROR)
+                                proxyUsername, proxyPassword) != RETURN_OK)
             continue;
 
         LONG sent =
@@ -1947,7 +1947,7 @@ static LONG sslConnectWithMuiPump(SSL *s) {
 #ifndef DAEMON
         if (openaiPumpMUIForNetwork(TRUE)) {
             streamLogApiError("ssl_connect", "aborted");
-            return -1;
+            return -2;
         }
 #endif
 
@@ -2308,7 +2308,7 @@ uploadOneOpenAIFile(struct ChatFile *file, ULONG fileIndex, ULONG fileCount,
 
     if (createSSLConnection(host, port, useSSL, useProxy, proxyHost, proxyPort,
                             proxyUsesSSL, proxyRequiresAuth, proxyUsername,
-                            proxyPassword) == RETURN_ERROR) {
+                            proxyPassword) != RETURN_OK) {
         Close(attachmentFile);
         return FALSE;
     }
@@ -2665,7 +2665,7 @@ static BOOL uploadOneGeminiFile(
 
     if (createSSLConnection(host, port, useSSL, useProxy, proxyHost, proxyPort,
                             proxyUsesSSL, proxyRequiresAuth, proxyUsername,
-                            proxyPassword) == RETURN_ERROR) {
+                            proxyPassword) != RETURN_OK) {
         Close(attachmentFile);
         return FALSE;
     }
@@ -2746,7 +2746,7 @@ static BOOL uploadOneGeminiFile(
     if (createSSLConnection(uploadHost, uploadPort, uploadUseSSL, useProxy,
                             proxyHost, proxyPort, proxyUsesSSL,
                             proxyRequiresAuth, proxyUsername,
-                            proxyPassword) == RETURN_ERROR) {
+                            proxyPassword) != RETURN_OK) {
         FreeVec(uploadPath);
         Close(attachmentFile);
         return FALSE;
@@ -3537,7 +3537,8 @@ LONG initOpenAIConnector() {
  * @param proxyRequiresAuth whether the proxy requires authentication or not
  * @param proxyUsername the proxy username to use
  * @param proxyPassword the proxy password to use
- * @return RETURN_OK on success, RETURN_ERROR on failure
+ * @return RETURN_OK success; RETURN_ERROR retryable (no requester);
+ *         RETURN_FAIL fatal (requester already shown); RETURN_WARN abort
  **/
 static ULONG createSSLConnection(CONST_STRPTR host, UWORD port, BOOL useSSL,
                                  BOOL useProxy, CONST_STRPTR proxyHost,
@@ -3552,7 +3553,7 @@ static ULONG createSSLConnection(CONST_STRPTR host, UWORD port, BOOL useSSL,
     showLoadingBar();
     if (openaiPumpMUIForNetwork(FALSE)) {
         closeActiveResponseConnection();
-        return RETURN_ERROR;
+        return RETURN_WARN;
     }
 #endif
 
@@ -3570,7 +3571,7 @@ static ULONG createSSLConnection(CONST_STRPTR host, UWORD port, BOOL useSSL,
     // Connect to the server first
     if (openaiPumpMUIForNetwork(TRUE)) {
         closeActiveResponseConnection();
-        return RETURN_ERROR;
+        return RETURN_WARN;
     }
     if ((hostent = gethostbyname(useProxy ? proxyHost : host)) != NULL) {
         memset(&addr, 0, sizeof(addr));
@@ -3651,7 +3652,7 @@ static ULONG createSSLConnection(CONST_STRPTR host, UWORD port, BOOL useSSL,
             closeActiveResponseConnection();
             FreeVec(connectRequest);
             FreeVec(authHeader);
-            return RETURN_ERROR;
+            return RETURN_FAIL;
         }
 
         FreeVec(connectRequest);
@@ -3666,7 +3667,7 @@ static ULONG createSSLConnection(CONST_STRPTR host, UWORD port, BOOL useSSL,
             }
             closeActiveResponseConnection();
             FreeVec(response);
-            return RETURN_ERROR;
+            return RETURN_FAIL;
         }
         FreeVec(response);
     }
@@ -3681,7 +3682,7 @@ static ULONG createSSLConnection(CONST_STRPTR host, UWORD port, BOOL useSSL,
         /* Perform SSL handshake (progressive; MUI pump + timeout). */
         if (openaiPumpMUIForNetwork(TRUE)) {
             closeActiveResponseConnection();
-            return RETURN_ERROR;
+            return RETURN_WARN;
         }
         streamLogApiError("connect", "ssl handshake begin");
         ssl_err = sslConnectWithMuiPump(ssl);
@@ -3690,12 +3691,19 @@ static ULONG createSSLConnection(CONST_STRPTR host, UWORD port, BOOL useSSL,
             /* Handshake successful. */
             // printf("SSL connection to %s using %s\n", host,
             // SSL_get_cipher(ssl));
-        } else {
-            /* Handshake failed: report with full diagnostics. */
-            if (ssl_err != -1)
-                reportSslError(ssl, ssl_err, "SSL_connect");
+        } else if (ssl_err == -2) {
+            /* User quit/cancel during handshake. */
             closeActiveResponseConnection();
-            return RETURN_ERROR;
+            return RETURN_WARN;
+        } else if (ssl_err == -1) {
+            /* Handshake timeout already displayed. */
+            closeActiveResponseConnection();
+            return RETURN_FAIL;
+        } else {
+            /* Handshake failed: report with full diagnostics (requester). */
+            reportSslError(ssl, ssl_err, "SSL_connect");
+            closeActiveResponseConnection();
+            return RETURN_FAIL;
         }
     }
 
@@ -5008,7 +5016,11 @@ struct json_object **postChatMessageToOpenAI(
                 LONG waitResult = waitForSocketReadable(useSSL);
                 if (waitResult == 0) {
                     idleWaitSeconds += SOCKET_READ_WAIT_SECONDS;
-                    updateStatusBar(STRING_WAITING_FOR_RESPONSE, yellowPen);
+                    /* Mid-stream stall: clearer status than "downloading". */
+                    updateStatusBar(totalBytesRead > 0
+                                        ? STRING_WAITING_FOR_MORE_DATA
+                                        : STRING_WAITING_FOR_RESPONSE,
+                                    yellowPen);
                     if (idleWaitSeconds >= SOCKET_READ_MAX_IDLE_SECONDS) {
                         SetIoErr(0);
                         if (responseIndex == 0) {
@@ -6544,7 +6556,7 @@ ULONG downloadFile(CONST_STRPTR url, CONST_STRPTR destination, BOOL useProxy,
                 if (createSSLConnection(hostString, 443, useSSL, useProxy,
                                         proxyHost, proxyPort, proxyUsesSSL,
                                         proxyRequiresAuth, proxyUsername,
-                                        proxyPassword) == RETURN_ERROR) {
+                                        proxyPassword) != RETURN_OK) {
                     if (connectionRetryCount++ >= MAX_CONNECTION_RETRIES) {
                         Close(fileHandle);
                         FreeVec(tempReadBuffer);
@@ -7663,7 +7675,7 @@ APTR postTextToSpeechRequestToOpenAI(
                 if (createSSLConnection(host, port, useSSL, useProxy, proxyHost,
                                         proxyPort, proxyUsesSSL,
                                         proxyRequiresAuth, proxyUsername,
-                                        proxyPassword) == RETURN_ERROR) {
+                                        proxyPassword) != RETURN_OK) {
                     if (connectionRetryCount++ >= MAX_CONNECTION_RETRIES) {
                         displayError(STRING_ERROR_CONNECTION_MAX_RETRIES);
                         return ttsFail(audioData);

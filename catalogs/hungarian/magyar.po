@@ -2241,6 +2241,11 @@ msgctxt "STRING_ERROR_SSL_WANT_READ_TIMEOUT (427//)"
 msgid "SSL: timeout waiting for stream data (WANT_READ)"
 msgstr "SSL: timeout waiting for stream data (WANT_READ)"
 
+#: src/openai.c
+msgctxt "STRING_WAITING_FOR_MORE_DATA (428//)"
+msgid "Waiting for more response data..."
+msgstr "Waiting for more response data..."
+
 #~ msgctxt "STRING_CLEAR_ATTACHMENTS (366//)"
 #~ msgid "Clear"
 #~ msgstr "Clear"

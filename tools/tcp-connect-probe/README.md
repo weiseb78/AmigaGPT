@@ -9,11 +9,11 @@ Ursache von AmigaGPT **8849** bestätigt:
 | Lauf | C-`errno` nach NB-`connect` | `Errno()` | NB wenn C-errno geprüft | NB wenn `Errno()` geprüft |
 | ---- | --------------------------- | --------- | ----------------------- | ------------------------- |
 | mit `SetErrnoPtr(&errno)` | 36 (`EINPROGRESS`) | 36 | OK | OK |
-| **ohne** `SetErrnoPtr` (wie AmigaGPT heute) | **0 (stale)** | 36 | **FAIL** (Hard-Error) | OK |
+| **ohne** `SetErrnoPtr` (wie AmigaGPT vor dem Fix) | **0 (stale)** | 36 | **FAIL** (Hard-Error) | OK |
 
 Blackhole `192.0.2.1`: WaitSelect-Timeout nach N Sekunden, **ohne Reboot**.
 
-**App-Fix (Branch `feature/morphos-connect-abort`):** `SetErrnoPtr` in `initOpenAIConnector`, MorphOS `connectSocketWithMuiPump()` (FIONBIO + `Errno()`/`errno` + WaitSelect + `SO_ERROR`, 45 s, MUI-Pump/Abort).
+**App-Fix (Branch `feature/morphos-connect-abort`):** `SetErrnoPtr` in `initOpenAIConnector`, MorphOS `connectSocketWithMuiPump()` (FIONBIO + `Errno()`/`errno` + WaitSelect + `SO_ERROR`, 45 s, MUI-Pump/Abort). Blocking `connect` bleibt nur der Kontrollpfad dieser Probe (Schritt 10).
 
 ## Build (WSL)
 
@@ -43,7 +43,7 @@ RAM:tcp_connect_probe --host example.com --port 80
 | Step | Bedeutung |
 | ---- | --------- |
 | 1–4 | Start, `bsdsocket`, `SetErrnoPtr`, DNS |
-| 10 | Blocking `connect` (wie AmigaGPT heute) |
+| 10 | Blocking `connect` (Kontrollpfad; App unter MorphOS nutzt NB) |
 | 20 | NB: `EINPROGRESS` aus **C-errno** |
 | 30 | NB: `EINPROGRESS` aus **`Errno()`** |
 | 90–99 | Cleanup / Ende |
