@@ -454,9 +454,11 @@ Paste im read-only Code-Viewer: weiterhin **kein** Ziel.
 
 *Bisherige „Phase 12“ — bewusst **nach** Phase 12, nicht davor (Worker soll den Scintilla-Chat-Stream optimieren, nicht NFloattext nachrüsten).*
 
-- **MUI Worker-Task** für Streaming — UI nicht blockieren
-- **Signal/Event-Modell:** `network task → parser task → ui task`
-- **Keine GUI-Updates pro Zeichen** — sammeln, batchweise aktualisieren (Lag, Repaint, CPU)
+**Wichtig (Desktop-Instinkt vs. MorphOS):** „Worker“ hier meint **nicht** automatisch Scintilla-`ILoader` / Background-Load aus einem zweiten Thread. MUI/Scintilla leben im UI-Task; sicheres Auslagern wie unter Win32/Qt ist auf MorphOS nicht der Default. Primär: **weniger und gestückelte** GUI-Arbeit. Ausführlich: [MORPHOS-STABILITAET.md](MORPHOS-STABILITAET.md) §6c.
+
+- **UI-Batching / Yields** — große `APPENDTEXT`-Läufe stückeln, `NewInput`/`CheckRefresh` dazwischen (teilweise schon umgesetzt)
+- Optional später: getrennter Netz-/Parser-Task — **nur** wenn klar ist, dass Scintilla-Befehle weiter nur im UI-Task landen
+- **Keine GUI-Updates pro Zeichen** — sammeln, batchweise aktualisieren (Lag, Repaint, CPU); Live-Scintilla während SSE bereits aus (R3)
 
 ---
 

@@ -155,6 +155,7 @@ Details: [PHASE-12-CHAT-SCINTILLA.md](PHASE-12-CHAT-SCINTILLA.md), [MIDI-MARKDOW
 | Neues Feature + Restart nicht testen lassen | Restart-Checkliste §3 nennen |
 | Antwort klingt „fertig“ nach nur `make` | Zuerst `package-morphos-cross.sh`, dann Version+MD5+Z:; sonst kein MorphOS-Übergabe |
 | „Fertig machen“ als Freibrief für Commit | **Nein** — erst Z:-Deploy OK, dann Nutzer-Test OK, dann Commit auf Topic-Branch |
+| GUI tot ⇒ „MorphOS komplett tot“, Logs auf `T:` suchen | MCP/`mcpd` kann noch laufen; Logs unter `Work:Tmp/` / `AMIGAGPT:` — [MORPHOS-STABILITAET.md](MORPHOS-STABILITAET.md) **§6b** |
 
 Cursor: `.cursor/rules/morphos-build-package.mdc`, **`.cursor/rules/morphos-hard-gates.mdc`**, `.cursor/rules/morphos-runtime-agent.mdc`
 
@@ -162,7 +163,7 @@ Cursor: `.cursor/rules/morphos-build-package.mdc`, **`.cursor/rules/morphos-hard
 
 ## 8. Verwandte Dokumente
 
-- [MORPHOS-STABILITAET.md](MORPHOS-STABILITAET.md) — **umgesetzte Stabilitätsmaßnahmen** (Shutdown, Scintilla, Neustart, Log)
+- [MORPHOS-STABILITAET.md](MORPHOS-STABILITAET.md) — Stabilität; **§6b MCP vs. tote GUI**, **§6c GUI-Task vs. Desktop-Instinkt** (warum kein Worker/`ILoader`)
 - [HANDLUNGSANWEISUNG-GIT.md](HANDLUNGSANWEISUNG-GIT.md) — Git, Paketieren, Commit-Zyklus  
 - [SCINTILLA-ARCHITECTURE.md](SCINTILLA-ARCHITECTURE.md) — Phasen, Parser, Stream  
 - [STREAM-RECOVERY.md](STREAM-RECOVERY.md) — R1–R3  

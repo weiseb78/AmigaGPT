@@ -6,7 +6,7 @@ Branch **scintilla**, MorphOS. Ergänzt [STREAM-RECOVERY.md](STREAM-RECOVERY.md)
 
 | Mechanismus | Rolle |
 |-------------|--------|
-| **Datei auf `T:`** | Hauptspur — strukturiert, exportierbar (Z:), ohne LogServer |
+| **Datei auf Platte (MorphOS)** | Hauptspur — `Work:Tmp/` + `AMIGAGPT:` überleben Hard-Reset; MCP kann sie lesen, wenn die GUI tot ist ([MORPHOS-STABILITAET.md](MORPHOS-STABILITAET.md) §6b) |
 | **`KPrintF`** (wenn Log aktiv) | Kurze Zeile in **LogServer / LogTool** (MorphOS ≥ 3.10, System-App) |
 | **Remote Logserver** | nicht vorgesehen |
 
@@ -21,10 +21,12 @@ In `ENVARC:AmigaGPT/config.json` (Fallback beim ersten Start: `AMIGAGPT:config.j
 "debugLifecycleLog": true
 ```
 
-| Key | Default | Log |
-|-----|---------|-----|
-| `debugStreamLog` | **false** | `T:amigagpt_stream.log`, `T:amigagpt_utf8.log`, LogTool `[AmigaGPT]` |
-| `debugLifecycleLog` | **false** | `AMIGAGPT:amigagpt_lifecycle.log`, Spiegel `T:amigagpt_lifecycle.log`, LogTool `[AmigaGPT lifecycle]` |
+| Key | Default | Log (MorphOS) |
+|-----|---------|----------------|
+| `debugStreamLog` | **false** | `Work:Tmp/amigagpt_stream.log`, `Work:Tmp/amigagpt_utf8.log`, LogTool `[AmigaGPT]` |
+| `debugLifecycleLog` | **false** | `AMIGAGPT:amigagpt_lifecycle.log`, Spiegel `Work:Tmp/amigagpt_lifecycle.log`, LogTool `[AmigaGPT lifecycle]` |
+
+Andere Targets (OS3/OS4): weiterhin `T:amigagpt_*.log` wo definiert.
 
 Nach Änderung App neu starten. Lifecycle-Zeilen beginnen **nach** `readConfig()` (nicht `startup begin` davor).
 
@@ -32,12 +34,14 @@ Nach Änderung App neu starten. Lifecycle-Zeilen beginnen **nach** `readConfig()
 
 ## Dateien
 
-| Pfad | Inhalt |
-|------|--------|
-| `T:amigagpt_stream.log` | Pro Chat-Stream-Ende eine Zeile |
-| `T:amigagpt_utf8.log` | Seltene UTF-8-Puffer-Hinweise |
+| Pfad (MorphOS) | Inhalt |
+|----------------|--------|
+| `Work:Tmp/amigagpt_stream.log` | Pro Chat-Stream-Ende eine Zeile; Boot-/Connect-Spuren |
+| `Work:Tmp/amigagpt_utf8.log` | Seltene UTF-8-Puffer-Hinweise |
+| `Work:Tmp/amigagpt_lifecycle.log` | Spiegel des Lifecycle-Logs |
+| `AMIGAGPT:amigagpt_lifecycle.log` | Primäres Lifecycle-Log |
 
-`T:` ist das übliche MorphOS-RAM-Volume (bei intaktem System immer verfügbar) — nach Reboot leer.
+`T:` (RAM) reicht für Freeze-Diagnose **nicht** — nach Hard-Reset ist es leer. Deshalb schreibt MorphOS die Debug-Dateien nach `Work:Tmp/` / `AMIGAGPT:`.
 
 ## Stream-Zeile (Format)
 

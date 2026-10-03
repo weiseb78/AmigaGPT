@@ -9,7 +9,7 @@
 | [DOKUMENTATION-WORKSPACE.md](DOKUMENTATION-WORKSPACE.md)     | Repo selbstständig — keine toten `../`-Links auf GitHub                            |
 | [HANDLUNGSANWEISUNG-GIT.md](HANDLUNGSANWEISUNG-GIT.md)       | Git (kein Commit auf `master`) **und** Begriff **Paketieren** = Z:-Deploy          |
 | [HANDLUNGSANWEISUNG-MORPHOS-AGENT.md](HANDLUNGSANWEISUNG-MORPHOS-AGENT.md) | **Agent:** Restart, ASL/PushMethod, Scintilla-Chat (vollständig im Repo) |
-| [MORPHOS-STABILITAET.md](MORPHOS-STABILITAET.md)             | **Umgesetzte Stabilitätsmaßnahmen** (Shutdown, Neustart, Scintilla, Lifecycle-Log) |
+| [MORPHOS-STABILITAET.md](MORPHOS-STABILITAET.md)             | Stabilität (Shutdown, Scintilla); **§6b MCP vs. GUI**, **§6c GUI-Task vs. Desktop-Instinkt** |
 | [MORPHOS-RELEASE-NOTES.md](MORPHOS-RELEASE-NOTES.md)       | **Was ist neu?** Fork-Releases (z. B. 2.18); `CHANGELOG.md` = upstream              |
 | [MORPHOS-VERSION.md](MORPHOS-VERSION.md)                     | `$VER:` Version.Revision (MorphOS Style Guide), `version.h`                        |
 | [GIT-FORK-WORKFLOW.md](GIT-FORK-WORKFLOW.md)                 | Remotes `origin` / `upstream`, Sync, PRs                                           |

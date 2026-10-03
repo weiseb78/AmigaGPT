@@ -445,6 +445,7 @@ MakeHook(FixedWidthFontsMenuItemClickedHook,
 
 HOOKPROTONHNONP(MarkdownRefreshFunc, void) {
 #ifdef __MORPHOS__
+    chatOutputScintillaResetPaintGuards();
     morphosScheduleChatOutputRefresh(TRUE);
 #else
     displayConversation(NULL);

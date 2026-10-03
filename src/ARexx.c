@@ -12,6 +12,7 @@
 #include "gui.h"
 #include "MainWindow.h"
 #include "openai.h"
+#include "version.h"
 
 /* Path to the daemon conversation history file in T: (cleared on reboot) */
 #define DAEMON_HISTORY_PATH "T:AmigaGPTD_history.json"
@@ -2834,6 +2835,13 @@ HOOKPROTONHNO(NewChatFunc, APTR, ULONG *arg) {
 }
 MakeHook(NewChatHook, NewChatFunc);
 
+HOOKPROTONHNO(VersionFunc, APTR, ULONG *arg) {
+    (void)arg;
+    set(app, MUIA_Application_RexxString, (STRPTR)APP_VERSION);
+    return RETURN_OK;
+}
+MakeHook(VersionHook, VersionFunc);
+
 HOOKPROTONHNO(HelpFunc, APTR, ULONG *arg) {
     set(app, MUIA_Application_RexxString,
         "SENDMESSAGE "
@@ -2855,7 +2863,8 @@ HOOKPROTONHNO(HelpFunc, APTR, ULONG *arg) {
         "LISTPROFILES\n"
         "LISTAUDIOFORMATS\n"
         "LISTIMAGESIZES\n"
-        "LISTVOICES PR=PROFILE/K\n");
+        "LISTVOICES PR=PROFILE/K\n"
+        "VERSION\n");
     return RETURN_OK;
 }
 MakeHook(HelpHook, HelpFunc);
@@ -2889,5 +2898,6 @@ struct MUI_Command arexxList[] = {
     {"LISTPROFILES", NULL, NULL, &ListProfilesHook, {0, 0, 0, 0, 0}},
     {"LISTIMAGESIZES", NULL, NULL, &ListImageSizesHook, {0, 0, 0, 0, 0}},
     {"LISTVOICES", "PR=PROFILE/K", 1, &ListVoicesHook, {0, 0, 0, 0, 0}},
+    {"VERSION", NULL, NULL, &VersionHook, {0, 0, 0, 0, 0}},
     {"?", NULL, NULL, &HelpHook, {0, 0, 0, 0, 0}},
     {NULL, NULL, 0, NULL, {0, 0, 0, 0, 0}}};

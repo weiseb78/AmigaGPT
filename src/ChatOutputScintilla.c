@@ -1234,7 +1234,8 @@ ULONG chatOutputScintillaBuildMidiMarkdownDisplay(const char *inUtf8,
 }
 
 #define CHAT_MD_TABLE_MAX_COLS 16
-#define CHAT_MD_TABLE_MAX_ROWS 64
+/** Header + separator + data; periodensystem alone is 120 rows. */
+#define CHAT_MD_TABLE_MAX_ROWS 256
 
 /** UTF-8 codepoint count (display width for pipe-table padding). */
 static ULONG chatMdUtf8CharCount(const char *s, ULONG byteLen) {
@@ -1693,6 +1694,11 @@ static ULONG chatMdFormatPipeTableBlock(const char *text, const UBYTE *styles, U
         rowCount++;
         pos = (lineEnd < len) ? lineEnd + 1 : lineEnd;
     }
+    /* Never drop trailing rows: abort formatting so caller keeps raw lines. */
+    if (pos < blockEnd) {
+        streamLogLifecycle("chat md pipe table exceeds max rows");
+        return 0;
+    }
     if (rowCount < 2) {
         return 0;
     }
@@ -1765,15 +1771,19 @@ static ULONG chatMdFormatPipeTableBlock(const char *text, const UBYTE *styles, U
             rowBudget += 4 + colWidths[b];
         }
         if (*outPos + rowBudget > cap) {
+            *outPos = newBlockStart;
+            streamLogLifecycle("chat md pipe table cap exceeded");
             return 0;
         }
         if (r == 1) {
             if (!chatMdEmitSyntheticSeparatorRow(text, len, styles, lineStarts[r], lineEnds[r],
                                                  ncol, colWidths, outPos, outUtf8, outStyles)) {
+                *outPos = newBlockStart;
                 return 0;
             }
         } else if (!chatMdEmitPaddedPipeRow(text, len, styles, lineStarts[r], lineEnds[r], ncol,
                                             colWidths, outPos, outUtf8, outStyles)) {
+            *outPos = newBlockStart;
             return 0;
         }
         if (oldLineLen < sizeof(oldLineBuf)) {
@@ -2104,7 +2114,8 @@ void chatOutputScintillaCancelDeferredStyles(void) {
     chatOutputDeferredPreserveViewport = FALSE;
     chatOutputDeferredFirstVisibleLine = 0;
     chatOutputDeferredOldLineCount = 1;
-    chatOutputScintillaMorphosSkipViewport = FALSE;
+    /* Do not clear chatOutputScintillaMorphosSkipViewport -- SetUtf8 sets it
+     * before CancelDeferredStyles and must keep the list/final-paint skip. */
 }
 
 BOOL chatOutputScintillaHasDeferredWorkPending(void) {
@@ -2117,7 +2128,7 @@ void chatOutputScintillaQuiesceForShutdown(Object *sci) {
     chatOutputScintillaCancelPendingCodeblockOpen();
     chatOutputScintillaCancelDeferredStyles();
     /*
-     * No SCI_CANCEL / SETMODEVENTMASK on quit — can hard-freeze MorphOS on large
+     * No SCI_CANCEL / SETMODEVENTMASK on quit - can hard-freeze MorphOS on large
      * styled chat docs; MUI_DisposeObject tears Scintilla down without clearing.
      */
     streamLogLifecycle("chat scintilla quiesce for shutdown done");
@@ -2714,21 +2725,90 @@ void chatOutputScintillaSetUtf8Text(Object *sci, const char *utf8) {
     chatOutputScintillaSetUtf8TextWithRoleStyles(sci, utf8, NULL, 0, FALSE);
 }
 
+static BOOL chatOutputScintillaSwapToEmptyDocument(Object *sci) {
+    sptr_t newDoc;
+    sptr_t oldDoc;
+
+    if (sci == NULL) {
+        return FALSE;
+    }
+    streamLogLifecycle("chat scintilla docswap create begin");
+    newDoc = codeBlocksScintillaCommand(sci, SCI_CREATEDOCUMENT, 0, 0);
+    if (newDoc == 0) {
+        streamLogLifecycle("chat scintilla docswap create failed");
+        return FALSE;
+    }
+    oldDoc = codeBlocksScintillaCommand(sci, SCI_GETDOCPOINTER, 0, 0);
+    streamLogLifecycle("chat scintilla docswap set begin");
+    codeBlocksScintillaCommand(sci, SCI_SETDOCPOINTER, 0, newDoc);
+    streamLogLifecycle("chat scintilla docswap set done");
+    if (oldDoc != 0) {
+        /*
+         * RELEASEDOCUMENT after a prior large chat paint hard-freezes the
+         * AmigaGPT task on MorphOS (seen on restart restore). Orphan the old
+         * document instead of hanging the app.
+         */
+        streamLogLifecycle("chat scintilla docswap old release skipped");
+        (void)oldDoc;
+    }
+    /* Fresh document: re-apply chat viewer defaults (no CLEARALL/SETTEXT). */
+    codeBlocksScintillaCommand(sci, SCI_SETCODEPAGE, SC_CP_UTF8, 0);
+    chatOutputScintillaInitRoleStyles(sci);
+    codeBlocksScintillaCommand(sci, SCI_SETUNDOCOLLECTION, 0, 0);
+    chatOutputScintillaApplyLineWrap(sci);
+    codeBlocksScintillaCommand(sci, SCI_SETHOTSPOTSINGLELINE, 1, 0);
+    chatOutputStreamSyncedUtf8Len = 0;
+    return TRUE;
+}
+
 void chatOutputScintillaClearDocument(Object *sci) {
     if (sci == NULL) {
         return;
     }
     /*
-     * SETTEXT "" on large per-byte styled documents can freeze MorphOS on quit;
-     * CLEARALL + CLEARDOCUMENTSTYLE matches code-block viewer shutdown path.
+     * CLEARALL/SETTEXT on large styled docs freeze MorphOS. Swap in an empty
+     * document via CREATEDOCUMENT/SETDOCPOINTER instead.
      */
     streamLogLifecycle("chat scintilla clear begin");
-    codeBlocksScintillaCommand(sci, SCI_SETREADONLY, 0, 0);
-    codeBlocksScintillaCommand(sci, SCI_CLEARDOCUMENTSTYLE, 0, 0);
-    codeBlocksScintillaCommand(sci, SCI_CLEARALL, 0, 0);
+    chatOutputScintillaCancelDeferredStyles();
+    if (!chatOutputScintillaSwapToEmptyDocument(sci)) {
+        streamLogLifecycle("chat scintilla clear skipped (no docswap)");
+        return;
+    }
     codeBlocksScintillaCommand(sci, SCI_SETREADONLY, 1, 0);
-    chatOutputStreamSyncedUtf8Len = 0;
     streamLogLifecycle("chat scintilla clear done");
+}
+
+/* TRUE while docswap+APPENDTEXT runs; nested refresh must not re-enter. */
+static BOOL chatOutputScintillaReplaceBusy;
+
+void chatOutputScintillaResetPaintGuards(void) {
+    chatOutputScintillaReplaceBusy = FALSE;
+    chatOutputScintillaCancelDeferredStyles();
+    chatOutputScintillaMorphosSkipViewport = FALSE;
+}
+
+static void chatOutputScintillaAppendTextChunked(Object *sci, const char *utf8,
+                                                 ULONG textLen) {
+    ULONG off = 0;
+    ULONG chunks = 0;
+    /* One large APPENDTEXT hard-freezes MorphOS (OS reset). Keep chunks small.
+     * Only CheckRefresh here -- NewInput re-entered deferred style/refresh
+     * hooks, cancelled pending hotspot styles, and left [Codeblock n] inert. */
+    const ULONG chunk = 128UL;
+
+    while (off < textLen) {
+        ULONG n = textLen - off;
+        if (n > chunk) {
+            n = chunk;
+        }
+        codeBlocksScintillaCommand(sci, SCI_APPENDTEXT, n, (sptr_t)(utf8 + off));
+        off += n;
+        chunks++;
+        if ((chunks & 7UL) == 0UL && app != NULL && !mainWindowIsShuttingDown()) {
+            (void)DoMethod(app, MUIM_Application_CheckRefresh);
+        }
+    }
 }
 
 void chatOutputScintillaSetUtf8TextWithRoleStyles(Object *sci, const char *utf8,
@@ -2742,6 +2822,10 @@ void chatOutputScintillaSetUtf8TextWithRoleStyles(Object *sci, const char *utf8,
     if (sci == NULL || mainWindowIsShuttingDown()) {
         return;
     }
+    if (chatOutputScintillaReplaceBusy) {
+        streamLogLifecycle("chat scintilla replace reentry skipped");
+        return;
+    }
     chatOutputScintillaEnsureViewerReady(sci);
     if (utf8 == NULL) {
         utf8 = "";
@@ -2753,10 +2837,29 @@ void chatOutputScintillaSetUtf8TextWithRoleStyles(Object *sci, const char *utf8,
         oldLineCount = codeBlocksScintillaCommand(sci, SCI_GETLINECOUNT, 0, 0);
     }
 
+    /*
+     * CLEARALL/SETTEXT freeze MorphOS on large styled chats (conversation
+     * switch). Swap to a fresh document, then APPENDTEXT the new body in
+     * small chunks with wrap disabled (full APPENDTEXT hard-freezes OS).
+     */
+    chatOutputScintillaReplaceBusy = TRUE;
+    chatOutputScintillaCancelDeferredStyles();
+    if (!chatOutputScintillaSwapToEmptyDocument(sci)) {
+        streamLogLifecycle("chat scintilla replace aborted (no docswap)");
+        chatOutputScintillaReplaceBusy = FALSE;
+        return;
+    }
     codeBlocksScintillaCommand(sci, SCI_SETREADONLY, 0, 0);
-    streamLogLifecycle("chat scintilla settext begin");
-    codeBlocksScintillaCommand(sci, SCI_SETTEXT, 0, (sptr_t)utf8);
-    streamLogLifecycle("chat scintilla settext done");
+    codeBlocksScintillaCommand(sci, SCI_SETWRAPMODE, SC_WRAP_NONE, 0);
+    if (textLen > 0) {
+        streamLogLifecycle("chat scintilla replace append begin");
+        chatOutputScintillaAppendTextChunked(sci, utf8, textLen);
+        streamLogLifecycle("chat scintilla replace append done");
+    } else {
+        streamLogLifecycle("chat scintilla replace empty");
+    }
+    chatOutputScintillaReplaceBusy = FALSE;
+    chatOutputScintillaApplyLineWrap(sci);
     chatOutputStreamSyncedUtf8Len = textLen;
     if (roleStyles != NULL && roleStyleLen > 0) {
         if (roleStyleLen > textLen) {

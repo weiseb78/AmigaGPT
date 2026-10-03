@@ -1762,10 +1762,15 @@ static LONG reconnectAndResendChatRequest(
         Delay(10);
         if (openaiPumpMUIForNetwork(TRUE))
             return -1;
-        if (createSSLConnection(host, port, useSSL, useProxy, proxyHost,
-                                proxyPort, proxyUsesSSL, proxyRequiresAuth,
-                                proxyUsername, proxyPassword) != RETURN_OK)
-            continue;
+        {
+            ULONG reconnectRc = createSSLConnection(
+                host, port, useSSL, useProxy, proxyHost, proxyPort,
+                proxyUsesSSL, proxyRequiresAuth, proxyUsername, proxyPassword);
+            if (reconnectRc == RETURN_WARN || reconnectRc == RETURN_FAIL)
+                return -1;
+            if (reconnectRc != RETURN_OK)
+                continue;
+        }
 
         LONG sent =
             writeRequestWithProgress(useSSL, request, requestLength, FALSE);
@@ -1919,31 +1924,66 @@ static LONG connectSocketWithMuiPump(struct sockaddr_in *addr) {
 /**
  * TLS handshake without SSL_MODE_AUTO_RETRY so WANT_READ/WANT_WRITE return to
  * us. Pump MUI between WaitSelect slices; abort on quit/cancel or timeout.
+ *
+ * MorphOS: socket must stay non-blocking here. connectSocketWithMuiPump clears
+ * FIONBIO after TCP connect; a blocking SSL_connect never returns to this loop
+ * (no MUI pump, no handshake timeout) -- UI "meditating" / Verbinden...
  **/
 static LONG sslConnectWithMuiPump(SSL *s) {
     ULONG elapsedSec = 0;
+    ULONG step = 0;
+#ifdef __MORPHOS__
+    LONG nbFlag = 1;
+#endif
 
     if (s == NULL || sock < 0)
         return -1;
 
+#ifdef __MORPHOS__
+    if (IoctlSocket(sock, FIONBIO, (char *)&nbFlag) < 0) {
+        streamLogApiError("ssl_connect", "FIONBIO on failed");
+    } else {
+        streamLogApiError("ssl_connect", "FIONBIO on");
+    }
+#endif
+
 #ifdef SSL_MODE_AUTO_RETRY
     /* AUTO_RETRY would spin/block inside OpenSSL without MUI or a deadline. */
     SSL_clear_mode(s, SSL_MODE_AUTO_RETRY);
+    streamLogApiError("ssl_connect", "AUTO_RETRY cleared");
+#else
+    streamLogApiError("ssl_connect", "AUTO_RETRY undef");
 #endif
 
     ERR_clear_error();
     for (;;) {
-        int ret = SSL_connect(s);
+        int ret;
         int err;
+        UBYTE detail[96];
 
+        snprintf((STRPTR)detail, sizeof(detail), "pre_connect step=%lu t=%lu",
+                 (unsigned long)step, (unsigned long)elapsedSec);
+        streamLogApiError("ssl_connect", (STRPTR)detail);
+
+        ret = SSL_connect(s);
         if (ret == 1) {
+            snprintf((STRPTR)detail, sizeof(detail),
+                     "post_connect step=%lu ret=1 t=%lu",
+                     (unsigned long)step, (unsigned long)elapsedSec);
+            streamLogApiError("ssl_connect", (STRPTR)detail);
 #ifdef SSL_MODE_AUTO_RETRY
             SSL_set_mode(s, SSL_MODE_AUTO_RETRY);
 #endif
+            streamLogApiError("ssl_connect", "ok");
             return 1;
         }
 
         err = SSL_get_error(s, ret);
+        snprintf((STRPTR)detail, sizeof(detail),
+                 "post_connect step=%lu ret=%d err=%d t=%lu",
+                 (unsigned long)step, ret, err, (unsigned long)elapsedSec);
+        streamLogApiError("ssl_connect", (STRPTR)detail);
+
 #ifndef DAEMON
         if (openaiPumpMUIForNetwork(TRUE)) {
             streamLogApiError("ssl_connect", "aborted");
@@ -1952,19 +1992,31 @@ static LONG sslConnectWithMuiPump(SSL *s) {
 #endif
 
         if (err == SSL_ERROR_WANT_READ) {
-            if (waitForSocketReadable(FALSE) < 0) {
+            LONG wr = waitForSocketReadable(FALSE);
+            snprintf((STRPTR)detail, sizeof(detail), "want_read WaitSelect=%ld",
+                     (long)wr);
+            streamLogApiError("ssl_connect", (STRPTR)detail);
+            if (wr < 0) {
                 streamLogApiError("ssl_connect", "want_read wait failed");
                 return ret;
             }
         } else if (err == SSL_ERROR_WANT_WRITE) {
-            if (waitForSocketWritable() < 0) {
+            LONG wr = waitForSocketWritable();
+            snprintf((STRPTR)detail, sizeof(detail), "want_write WaitSelect=%ld",
+                     (long)wr);
+            streamLogApiError("ssl_connect", (STRPTR)detail);
+            if (wr < 0) {
                 streamLogApiError("ssl_connect", "want_write wait failed");
                 return ret;
             }
         } else {
+            snprintf((STRPTR)detail, sizeof(detail), "fatal err=%d ret=%d", err,
+                     ret);
+            streamLogApiError("ssl_connect", (STRPTR)detail);
             return ret;
         }
 
+        step++;
         elapsedSec++;
         if (elapsedSec >= SSL_HANDSHAKE_MAX_SECONDS) {
             streamLogApiError("ssl_connect", "handshake timeout");
@@ -6425,7 +6477,6 @@ ULONG downloadFile(CONST_STRPTR url, CONST_STRPTR destination, BOOL useProxy,
              pathString, hostString, authHeader);
 
     updateStatusBar(STRING_CONNECTING, yellowPen);
-    UBYTE connectionRetryCount = 0;
     if (openAIConnectShouldAbort(openAIConnectWithRetries(
             hostString, 443, useSSL, useProxy, proxyHost, proxyPort,
             proxyUsesSSL, proxyRequiresAuth, proxyUsername, proxyPassword))) {
@@ -6553,21 +6604,24 @@ ULONG downloadFile(CONST_STRPTR url, CONST_STRPTR destination, BOOL useProxy,
                 reportSslError(ssl, bytesRead, "SSL_read (download)");
                 /* Attempt reconnect & range resume follows as before */
                 updateStatusBar(STRING_ERROR_LOST_CONNECTION, redPen);
-                if (createSSLConnection(hostString, 443, useSSL, useProxy,
-                                        proxyHost, proxyPort, proxyUsesSSL,
-                                        proxyRequiresAuth, proxyUsername,
-                                        proxyPassword) != RETURN_OK) {
-                    if (connectionRetryCount++ >= MAX_CONNECTION_RETRIES) {
-                        Close(fileHandle);
-                        FreeVec(tempReadBuffer);
+                /* WARN/FAIL must not fall through to Range-GET on a closed sock. */
+                if (openAIConnectShouldAbort(openAIConnectWithRetries(
+                        hostString, 443, useSSL, useProxy, proxyHost,
+                        proxyPort, proxyUsesSSL, proxyRequiresAuth,
+                        proxyUsername, proxyPassword))) {
+                    Close(fileHandle);
+                    FreeVec(tempReadBuffer);
+                    if (sock >= 0) {
                         CloseSocket(sock);
+                        sock = -1;
+                    }
+                    if (ssl != NULL) {
                         SSL_shutdown(ssl);
                         SSL_free(ssl);
                         ssl = NULL;
-                        sock = -1;
-                        FreeVec(authHeader);
-                        return RETURN_ERROR;
                     }
+                    FreeVec(authHeader);
+                    return RETURN_ERROR;
                 }
                 headersRead = FALSE;
                 dataStart = NULL;
@@ -7100,7 +7154,6 @@ APTR postTextToSpeechRequestToOpenAI(
     }
 
     updateStatusBar(STRING_CONNECTING, yellowPen);
-    UBYTE connectionRetryCount = 0;
     if (openAIConnectShouldAbort(openAIConnectWithRetries(
             host, port, useSSL, useProxy, proxyHost, proxyPort, proxyUsesSSL,
             proxyRequiresAuth, proxyUsername, proxyPassword))) {
@@ -7672,39 +7725,35 @@ APTR postTextToSpeechRequestToOpenAI(
             case SSL_ERROR_SSL: {
                 reportSslError(ssl, bytesRead, "SSL_read (tts)");
                 updateStatusBar(STRING_ERROR_LOST_CONNECTION, redPen);
-                if (createSSLConnection(host, port, useSSL, useProxy, proxyHost,
-                                        proxyPort, proxyUsesSSL,
-                                        proxyRequiresAuth, proxyUsername,
-                                        proxyPassword) != RETURN_OK) {
-                    if (connectionRetryCount++ >= MAX_CONNECTION_RETRIES) {
-                        displayError(STRING_ERROR_CONNECTION_MAX_RETRIES);
-                        return ttsFail(audioData);
+                /* WARN/FAIL abort; retryable errors go through WithRetries. */
+                if (openAIConnectShouldAbort(openAIConnectWithRetries(
+                        host, port, useSSL, useProxy, proxyHost, proxyPort,
+                        proxyUsesSSL, proxyRequiresAuth, proxyUsername,
+                        proxyPassword))) {
+                    return ttsFail(audioData);
+                }
+                /* Successful reconnection - restart the download */
+                *audioLength = 0;
+                hasReadHeader = FALSE;
+                useSeed = FALSE;
+                seedLen = 0;
+                newChunkNeeded = TRUE;
+                chunkBytesNeedingRead = 0;
+                bytesRemainingInBuffer = 0;
+                if (useSSL) {
+                    ERR_clear_error();
+                    ssl_err =
+                        SSL_write(ssl, writeBuffer, strlen(writeBuffer));
+                    if (ssl_err <= 0) {
+                        reportSslError(ssl, ssl_err,
+                                       "SSL_write (tts retry)");
+                        continue;
                     }
                 } else {
-                    // Successful reconnection - restart the download
-                    *audioLength = 0; // Reset audio length
-                    hasReadHeader = FALSE;
-                    useSeed = FALSE;
-                    seedLen = 0;
-                    newChunkNeeded = TRUE;
-                    chunkBytesNeedingRead = 0;
-                    bytesRemainingInBuffer = 0;
-                    // Re-send the HTTP request
-                    if (useSSL) {
-                        ERR_clear_error();
-                        ssl_err =
-                            SSL_write(ssl, writeBuffer, strlen(writeBuffer));
-                        if (ssl_err <= 0) {
-                            reportSslError(ssl, ssl_err,
-                                           "SSL_write (tts retry)");
-                            continue;
-                        }
-                    } else {
-                        ssl_err =
-                            send(sock, writeBuffer, strlen(writeBuffer), 0);
-                        if (ssl_err <= 0) {
-                            continue;
-                        }
+                    ssl_err =
+                        send(sock, writeBuffer, strlen(writeBuffer), 0);
+                    if (ssl_err <= 0) {
+                        continue;
                     }
                 }
                 break;
