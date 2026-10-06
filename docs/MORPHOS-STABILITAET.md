@@ -16,15 +16,16 @@ Diagnose über persistentes Lifecycle-Log (`AMIGAGPT:amigagpt_lifecycle.log`).
 
 | Ort | Persistent? | Inhalt |
 | --- | ----------- | ------ |
-| **ENVARC:** | Ja (über Neustart) | MUI: `ENVARC:mui/AmigaGPT.prefs` (`Application_Save`/`Load`); App-Zustand: `ENVARC:AmigaGPT/config.json` (Einstellungen/API-Keys), `ENVARC:AmigaGPT/last-conversation` (zuletzt gewählter Chat) |
+| **ENV:** | Nein (RAM, aktuelle Session) | App-Prefs lesen hier: `ENV:AmigaGPT/config.json`, `ENV:AmigaGPT/last-conversation` |
+| **ENVARC:** | Ja (über Neustart) | MUI: `ENVARC:mui/AmigaGPT.prefs` (`Application_Save`/`Load`); App schreibt Prefs parallel nach `ENVARC:AmigaGPT/` (gleiche Dateinamen) — Boot kopiert Archive → ENV |
 | **AMIGAGPT:** | Ja (Daten-Volume) | `chat-history.json`, `image-history.json`, Bilder unter `images/` — **kein** UI-Zustand/Prefs mehr (Legacy: `config.json`, `last-conversation.txt` werden einmalig migriert); Lifecycle-Log `amigagpt_lifecycle.log` |
 | **Work:Tmp/** | Ja (Festplatte) | MorphOS-Debug nach Hard-Reset: `amigagpt_stream.log`, `amigagpt_lifecycle.log` (Spiegel), `amigagpt_startup.last` / `amigagpt_shutdown.last` — siehe [PHASE-9-DEBUG-LOGS.md](PHASE-9-DEBUG-LOGS.md) |
-| **T:** | Nein (RAM) | Nur noch Relaunch-Locks (`amigagpt_instance.lock`, `amigagpt_teardown.lock`) — nach Reset weg |
+| **T:** | Nein (RAM) | Relaunch-Locks (`amigagpt_instance.lock`, `amigagpt_teardown.lock`) — nach Reset weg |
 
 **Warum nicht nur MUI-ENVARC für die aktive Konversation?**  
-`Application_Load` läuft in `createMainWindow()` **vor** `loadConversations()` — die NList ist noch leer; ein zweites Load **nach** `loadConversations()` hat die NList beim Restart kaputt gemacht (nicht wieder einführen). Beim Quit wird die Liste in `mainWindowPrepareShutdown()` **geleert**, **bevor** `Application_Save` — die aktive Zeile landet so oft nicht in `AmigaGPT.prefs`. Daher eigener Eintrag `ENVARC:AmigaGPT/last-conversation` (Chat-**Name**, nach `loadConversations()` per `restoreLastSelectedConversation()`).
+`Application_Load` läuft in `createMainWindow()` **vor** `loadConversations()` — die NList ist noch leer; ein zweites Load **nach** `loadConversations()` hat die NList beim Restart kaputt gemacht (nicht wieder einführen). Beim Quit wird die Liste in `mainWindowPrepareShutdown()` **geleert**, **bevor** `Application_Save` — die aktive Zeile landet so oft nicht in `AmigaGPT.prefs`. Daher eigener Eintrag `ENV:`/`ENVARC:AmigaGPT/last-conversation` (Chat-**Name**, nach `loadConversations()` per `restoreLastSelectedConversation()`).
 
-Einmalige Migration: falls noch `AMIGAGPT:config.json` oder `AMIGAGPT:last-conversation.txt` existieren, werden sie beim ersten Lesen nach ENVARC übernommen (Lifecycle-Log: `config read fallback amigagpt` → `config migrate amigagpt to envarc`).
+Lesen: `ENV:` zuerst, dann `ENVARC:`, dann Legacy `AMIGAGPT:`. Schreiben immer **ENV + ENVARC**. Kaputtes ENV wird nicht mit ENVARC-Fallback überschrieben (Keys schützen).
 
 ---
 
@@ -53,7 +54,7 @@ Einmalige Migration: falls noch `AMIGAGPT:config.json` oder `AMIGAGPT:last-conve
 | **Teardown-Marker + Lock frei** | `morphos_relaunch.c` | `T:amigagpt_teardown.lock` während Dispose; Instance-Lock **sofort** zu Shutdown-Beginn frei (8782) |
 | **Single-Instance-Lock** | `morphos_relaunch.c` | `T:amigagpt_instance.lock` mit Task-**Pointer** (nicht Name); Startup blockiert nur bei lebendem Peer |
 | **Chat-Shutdown** | `MainWindow.c` / `ChatOutputScintilla.c` | Konversationswahl erst nach `morphos conversation select enabled`; vor Dispose Notify abklemmen, **keine** SCI-Befehle am Chat-Scintilla beim Quit |
-| **Letzte Konversation** | `saveLastSelectedConversationName()` | Vor `currentConversation = NULL` in `mainWindowPrepareShutdown()` sowie bei Listenwahl → `ENVARC:AmigaGPT/last-conversation` |
+| **Letzte Konversation** | `saveLastSelectedConversationName()` | Vor `currentConversation = NULL` in `mainWindowPrepareShutdown()` sowie bei Listenwahl → ENV + ENVARC `…/last-conversation` |
 
 ---
 
@@ -68,7 +69,7 @@ Einmalige Migration: falls noch `AMIGAGPT:config.json` oder `AMIGAGPT:last-conve
 | **Code-Fenster nach Load zu** | `createMainWindow()` | ENVARC darf Code-Viewer nicht vor Scintilla-Init öffnen |
 | **Chat Scintilla prime/finish getrennt** | `createMainWindow()` + `morphosRunStartupDeferred()` | `chatOutputScintillaPrimeViewer` vor `OM_ADDMEMBER`; volles Init (`FinishViewerInit`) erst in erstem `NewInput` |
 | **Code-Scintilla prime at startup** | `gui.c` | `codeBlocksViewerPrimeScintillaAtStartup()` — schweres Init nicht im ersten Fenster-Open |
-| **Letzte Konversation wiederherstellen** | `restoreLastSelectedConversation()` nach `loadConversations()` | Liest `ENVARC:AmigaGPT/last-conversation`, setzt NList-Active per Name; Log: `restore last conversation ok` / `miss` |
+| **Letzte Konversation wiederherstellen** | `restoreLastSelectedConversation()` nach `loadConversations()` | Liest ENV → ENVARC `…/last-conversation`, setzt NList-Active per Name; Log: `restore last conversation ok` / `miss` |
 | **Konversationswahl freigeben** | `morphosEnableConversationSelect()` nach `morphosRunStartupDeferred()` | Erst wenn Scintilla fertig; Log: `morphos conversation select enabled` |
 | **Auto-Select Fallback** | `morphosEnableConversationSelect()` | Wenn weder ENVARC-Name noch aktive Zeile: erste Liste (`morphos conversation auto-select first`); sonst `auto-select active`; Laden per `PushMethod` (`conversation select deferred begin`) |
 | **Fenster nach vorn** | `createMainWindow()` | `MUIM_Window_ToFront` nach `MUIA_Window_Open, TRUE` |

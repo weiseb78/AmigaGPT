@@ -11,7 +11,7 @@ Read **`docs/HANDLUNGSANWEISUNG-MORPHOS-AGENT.md`** when touching:
 
 ## Must not regress
 
-1. **Quit/restart:** `mainWindowPrepareShutdown()` — release **pens before** closing window; empty conversation list with destruct; single `Application_Load` before open; no Screen-hook that reloads ENVARC. Prefs → **`ENVARC:AmigaGPT/`** (`config.json`, `last-conversation`); not `AMIGAGPT:` for UI/config state.
+1. **Quit/restart:** `mainWindowPrepareShutdown()` — release **pens before** closing window; empty conversation list with destruct; single `Application_Load` before open; no Screen-hook that reloads ENVARC. Prefs → read **`ENV:AmigaGPT/`**, write **ENV + ENVARC** (`config.json`, `last-conversation`); not `AMIGAGPT:` for UI/config state.
 2. **Menu → file dialog:** use `MUIM_Application_PushMethod` + deferred hook (not direct ASL from app notify).
 3. **Chat markdown:** no `SCLEX_MARKDOWN` in chat (MorphOS ineffective); use midi-markdown plan (Scintilla styles).
 

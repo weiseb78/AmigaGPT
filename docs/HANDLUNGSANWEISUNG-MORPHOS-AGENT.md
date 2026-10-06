@@ -64,8 +64,8 @@ Diese Punkte gelten **immer** — auch wenn der Nutzer „fertig machen“, „w
 | Regel | Umsetzung im Code |
 | ----- | ----------------- |
 | **Ein** `MUIM_Application_Load` vor Fenster-Open | In `createMainWindow()` — **kein** zweites Load nach `loadConversations()` |
-| **Letzte Konversation** | `ENVARC:AmigaGPT/last-conversation` — nicht `AMIGAGPT:` für UI-Zustand; nach `loadConversations()` wiederherstellen (siehe [MORPHOS-STABILITAET.md](MORPHOS-STABILITAET.md) §1b) |
-| **Config / API-Keys** | `ENVARC:AmigaGPT/config.json` — Lesen mit Fallback `AMIGAGPT:config.json`, Schreiben nur ENVARC; Log: `config read envarc` / `config read fallback amigagpt` |
+| **Letzte Konversation** | Lesen `ENV:` → Fallback `ENVARC:` / Legacy; Schreiben **ENV + ENVARC** (`…/last-conversation`) — nicht `AMIGAGPT:` für UI-Zustand; nach `loadConversations()` wiederherstellen (siehe [MORPHOS-STABILITAET.md](MORPHOS-STABILITAET.md) §1b) |
+| **Config / API-Keys** | Lesen `ENV:AmigaGPT/config.json` → Fallback `ENVARC:` → Legacy `AMIGAGPT:`; Schreiben **ENV + ENVARC** (beide müssen OK); atomares Write via tmp→`.bak`-Aside→Rename; Log: `config read env` / `config write env` / `config write envarc` |
 | **Kein** `ConfigureForScreen`-Hook auf `MUIA_Window_Screen`, der ENVARC lädt und Fenster wieder öffnet | Entfernt in `360a0dd`; nicht zurückbauen |
 | **`mainWindowPrepareShutdown()`** vor `MUI_DisposeObject(app)` | In `shutdownGUI()` |
 | **Pens freigeben, solange Fenster/Screen noch gültig** | `mainWindowReleasePens()` **vor** `MUIA_Window_Open, FALSE` |
