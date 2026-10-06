@@ -48,8 +48,16 @@ static LONG configCommitAtomicFile(CONST_STRPTR finalPath, CONST_STRPTR tmpPath,
                                    BPTR file, STRPTR jsonBody, ULONG jsonLen,
                                    CONST_STRPTR okLog) {
     LONG wrote;
+    UBYTE bakPath[128];
+    BOOL movedAside = FALSE;
+    BPTR probe;
 
     if (file == 0 || jsonBody == NULL || finalPath == NULL || tmpPath == NULL) {
+        return RETURN_ERROR;
+    }
+    if (strlen(finalPath) + 4 >= sizeof(bakPath)) {
+        Close(file);
+        DeleteFile(tmpPath);
         return RETURN_ERROR;
     }
     wrote = Write(file, jsonBody, jsonLen);
@@ -58,15 +66,37 @@ static LONG configCommitAtomicFile(CONST_STRPTR finalPath, CONST_STRPTR tmpPath,
         DeleteFile(tmpPath);
         return RETURN_ERROR;
     }
-    DeleteFile(finalPath);
-    if (Rename(tmpPath, finalPath)) {
-        if (okLog != NULL) {
-            streamLogLifecycle(okLog);
+
+    /*
+     * Never DeleteFile(final) before Rename(tmp?final): a failed Rename would
+     * leave the location empty. Move the live file aside, then swap.
+     */
+    strcpy((char *)bakPath, finalPath);
+    strcat((char *)bakPath, ".bak");
+    DeleteFile((CONST_STRPTR)bakPath);
+
+    probe = Open(finalPath, MODE_OLDFILE);
+    if (probe != 0) {
+        Close(probe);
+        if (!Rename(finalPath, (CONST_STRPTR)bakPath)) {
+            DeleteFile(tmpPath);
+            return RETURN_ERROR;
         }
-        return RETURN_OK;
+        movedAside = TRUE;
     }
-    DeleteFile(tmpPath);
-    return RETURN_ERROR;
+
+    if (!Rename(tmpPath, finalPath)) {
+        if (movedAside) {
+            Rename((CONST_STRPTR)bakPath, finalPath);
+        }
+        DeleteFile(tmpPath);
+        return RETURN_ERROR;
+    }
+    DeleteFile((CONST_STRPTR)bakPath);
+    if (okLog != NULL) {
+        streamLogLifecycle(okLog);
+    }
+    return RETURN_OK;
 }
 
 static LONG configWriteOneLocation(CONST_STRPTR dir, CONST_STRPTR finalPath,
@@ -85,7 +115,7 @@ static LONG configWriteOneLocation(CONST_STRPTR dir, CONST_STRPTR finalPath,
                                   okLog);
 }
 
-/* Write RAM copy first, then archive. Both should succeed. */
+/* Write RAM copy first, then archive. Both must succeed. */
 static LONG configWriteEnvAndEnvarc(STRPTR jsonBody, ULONG jsonLen) {
     LONG envRc;
     LONG arcRc;
@@ -105,8 +135,7 @@ static LONG configWriteEnvAndEnvarc(STRPTR jsonBody, ULONG jsonLen) {
     if (arcRc != RETURN_OK) {
         streamLogLifecycle("config write envarc fail");
     }
-    /* ENV is enough for this boot; ENVARC needed across reboot. */
-    return (envRc == RETURN_OK) ? RETURN_OK : RETURN_ERROR;
+    return RETURN_ERROR;
 }
 
 static BPTR openConfigForReadAfter(ConfigReadSource after,
@@ -2244,11 +2273,11 @@ static LONG loadConfig(struct AmigaGPTConfigData *data) {
             FreeVec(configJsonString);
             configJsonString = NULL;
             streamLogLifecycle("config parse fail try next");
-            printf(STRING_ERROR_CONFIG_FILE_PARSE);
-            putchar('\n');
             tried = source;
             file = openConfigForReadAfter(tried, &source);
             if (file == 0) {
+                printf(STRING_ERROR_CONFIG_FILE_PARSE);
+                putchar('\n');
                 return RETURN_ERROR;
             }
             continue;
@@ -2907,7 +2936,17 @@ static LONG loadConfig(struct AmigaGPTConfigData *data) {
         /* Save migrated config */
         FreeVec(configJsonString);
         json_object_put(configJsonObject);
+#ifdef __MORPHOS__
+        /* ENV existed but was unreadable and we loaded a fallback ? do not
+         * overwrite the corrupt ENV (may still hold keys ENVARC lacks). */
+        if (!envMissingAtStart && source != CONFIG_SOURCE_ENV) {
+            streamLogLifecycle("config migrate skip overwrite unreadable env");
+        } else {
+            saveConfig(data);
+        }
+#else
         saveConfig(data);
+#endif
 
         printf("Config migration complete. Your old settings have been "
                "preserved.\n");
@@ -3066,7 +3105,16 @@ static LONG loadConfig(struct AmigaGPTConfigData *data) {
                 freeString(&data->openAiChatSystem);
                 data->openAiChatSystem = copyString(data->chatSystem);
             }
+#ifdef __MORPHOS__
+            if (!envMissingAtStart && source != CONFIG_SOURCE_ENV) {
+                streamLogLifecycle(
+                    "config profile migrate skip overwrite unreadable env");
+            } else {
+                saveConfig(data);
+            }
+#else
             saveConfig(data);
+#endif
         }
     }
 
