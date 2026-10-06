@@ -168,34 +168,62 @@ static void finishChatStream(ChatStreamOutcome outcome, UTF8 *receivedMessage,
 static void appendMessageFileSummary(struct ConversationNode *message);
 static LONG loadConversations();
 static LONG saveConversations();
+#ifdef __MORPHOS__
+#define LAST_CONVERSATION_ENV_DIR "ENV:AmigaGPT"
+#define LAST_CONVERSATION_ENV_PATH "ENV:AmigaGPT/last-conversation"
+#define LAST_CONVERSATION_ENVARC_DIR "ENVARC:AmigaGPT"
+#define LAST_CONVERSATION_ENVARC_PATH "ENVARC:AmigaGPT/last-conversation"
+#else
 #define LAST_CONVERSATION_DIR "ENVARC:AmigaGPT"
 #define LAST_CONVERSATION_PATH "ENVARC:AmigaGPT/last-conversation"
+#endif
 #define LAST_CONVERSATION_LEGACY "AMIGAGPT:last-conversation.txt"
 #define LAST_CONVERSATION_NAME_MAX 512
 
-static void ensureLastConversationEnvarcDir(void) {
-    CreateDir(LAST_CONVERSATION_DIR);
-}
-
 static void saveLastSelectedConversationName(struct Conversation *conversation) {
     BPTR file;
+    LONG nameLen;
 
     if (conversation == NULL || conversation->name == NULL ||
         conversation->name[0] == '\0') {
         return;
     }
-    ensureLastConversationEnvarcDir();
+    nameLen = (LONG)strlen(conversation->name);
+#ifdef __MORPHOS__
+    CreateDir(LAST_CONVERSATION_ENV_DIR);
+    file = Open(LAST_CONVERSATION_ENV_PATH, MODE_NEWFILE);
+    if (file != 0) {
+        Write(file, conversation->name, nameLen);
+        Close(file);
+    }
+    CreateDir(LAST_CONVERSATION_ENVARC_DIR);
+    file = Open(LAST_CONVERSATION_ENVARC_PATH, MODE_NEWFILE);
+    if (file != 0) {
+        Write(file, conversation->name, nameLen);
+        Close(file);
+    }
+#else
+    CreateDir(LAST_CONVERSATION_DIR);
     file = Open(LAST_CONVERSATION_PATH, MODE_NEWFILE);
     if (file == 0) {
         return;
     }
-    Write(file, conversation->name, (LONG)strlen(conversation->name));
+    Write(file, conversation->name, nameLen);
     Close(file);
+#endif
 }
 
 static BPTR openLastConversationFile(void) {
-    BPTR file = Open(LAST_CONVERSATION_PATH, MODE_OLDFILE);
+    BPTR file;
 
+#ifdef __MORPHOS__
+    file = Open(LAST_CONVERSATION_ENV_PATH, MODE_OLDFILE);
+    if (file == 0) {
+        file = Open(LAST_CONVERSATION_ENVARC_PATH, MODE_OLDFILE);
+    }
+#else
+    file = Open(LAST_CONVERSATION_PATH, MODE_OLDFILE);
+#endif
     if (file == 0) {
         file = Open(LAST_CONVERSATION_LEGACY, MODE_OLDFILE);
     }
