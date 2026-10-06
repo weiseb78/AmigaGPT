@@ -27,6 +27,10 @@
 #define DEFAULT_NARRATOR_SEX 0  /* male */
 
 #ifdef __MORPHOS__
+/* Prefs: read ENV (RAM), write ENV + ENVARC (persist). Not AMIGAGPT: for UI. */
+#define CONFIG_ENV_DIR "ENV:AmigaGPT"
+#define CONFIG_ENV_PATH "ENV:AmigaGPT/config.json"
+#define CONFIG_ENV_TMP_PATH "ENV:AmigaGPT/config.json.tmp"
 #define CONFIG_ENVARC_DIR "ENVARC:AmigaGPT"
 #define CONFIG_ENVARC_PATH "ENVARC:AmigaGPT/config.json"
 #define CONFIG_ENVARC_TMP_PATH "ENVARC:AmigaGPT/config.json.tmp"
@@ -35,54 +39,144 @@
 
 typedef enum {
     CONFIG_SOURCE_NONE = 0,
+    CONFIG_SOURCE_ENV,
     CONFIG_SOURCE_ENVARC,
     CONFIG_SOURCE_LEGACY
 } ConfigReadSource;
 
-static void ensureConfigEnvarcDir(void) { CreateDir(CONFIG_ENVARC_DIR); }
-
-static BPTR openConfigForRead(ConfigReadSource *source) {
-    BPTR file;
-
-    if (source != NULL) {
-        *source = CONFIG_SOURCE_NONE;
-    }
-    file = Open(CONFIG_ENVARC_PATH, MODE_OLDFILE);
-    if (file != 0) {
-        if (source != NULL) {
-            *source = CONFIG_SOURCE_ENVARC;
-        }
-        return file;
-    }
-    file = Open(CONFIG_LEGACY_PATH, MODE_OLDFILE);
-    if (file != 0) {
-        if (source != NULL) {
-            *source = CONFIG_SOURCE_LEGACY;
-        }
-        return file;
-    }
-    return 0;
-}
-
-static LONG configCommitEnvarcFile(BPTR file, STRPTR jsonBody, ULONG jsonLen) {
+static LONG configCommitAtomicFile(CONST_STRPTR finalPath, CONST_STRPTR tmpPath,
+                                   BPTR file, STRPTR jsonBody, ULONG jsonLen,
+                                   CONST_STRPTR okLog) {
     LONG wrote;
+    UBYTE bakPath[128];
+    BOOL movedAside = FALSE;
+    BPTR probe;
 
-    if (file == 0 || jsonBody == NULL) {
+    if (file == 0 || jsonBody == NULL || finalPath == NULL || tmpPath == NULL) {
+        return RETURN_ERROR;
+    }
+    if (strlen(finalPath) + 4 >= sizeof(bakPath)) {
+        Close(file);
+        DeleteFile(tmpPath);
         return RETURN_ERROR;
     }
     wrote = Write(file, jsonBody, jsonLen);
     Close(file);
     if (wrote != (LONG)jsonLen) {
-        DeleteFile(CONFIG_ENVARC_TMP_PATH);
+        DeleteFile(tmpPath);
         return RETURN_ERROR;
     }
-    DeleteFile(CONFIG_ENVARC_PATH);
-    if (Rename(CONFIG_ENVARC_TMP_PATH, CONFIG_ENVARC_PATH)) {
-        streamLogLifecycle("config write envarc");
+
+    /*
+     * Never DeleteFile(final) before Rename(tmp?final): a failed Rename would
+     * leave the location empty. Move the live file aside, then swap.
+     */
+    strcpy((char *)bakPath, finalPath);
+    strcat((char *)bakPath, ".bak");
+    DeleteFile((CONST_STRPTR)bakPath);
+
+    probe = Open(finalPath, MODE_OLDFILE);
+    if (probe != 0) {
+        Close(probe);
+        if (!Rename(finalPath, (CONST_STRPTR)bakPath)) {
+            DeleteFile(tmpPath);
+            return RETURN_ERROR;
+        }
+        movedAside = TRUE;
+    }
+
+    if (!Rename(tmpPath, finalPath)) {
+        if (movedAside) {
+            Rename((CONST_STRPTR)bakPath, finalPath);
+        }
+        DeleteFile(tmpPath);
+        return RETURN_ERROR;
+    }
+    DeleteFile((CONST_STRPTR)bakPath);
+    if (okLog != NULL) {
+        streamLogLifecycle(okLog);
+    }
+    return RETURN_OK;
+}
+
+static LONG configWriteOneLocation(CONST_STRPTR dir, CONST_STRPTR finalPath,
+                                   CONST_STRPTR tmpPath, STRPTR jsonBody,
+                                   ULONG jsonLen, CONST_STRPTR okLog) {
+    BPTR file;
+
+    if (dir != NULL) {
+        CreateDir(dir);
+    }
+    file = Open(tmpPath, MODE_NEWFILE);
+    if (file == 0) {
+        return RETURN_ERROR;
+    }
+    return configCommitAtomicFile(finalPath, tmpPath, file, jsonBody, jsonLen,
+                                  okLog);
+}
+
+/* Write RAM copy first, then archive. Both must succeed. */
+static LONG configWriteEnvAndEnvarc(STRPTR jsonBody, ULONG jsonLen) {
+    LONG envRc;
+    LONG arcRc;
+
+    envRc = configWriteOneLocation(CONFIG_ENV_DIR, CONFIG_ENV_PATH,
+                                   CONFIG_ENV_TMP_PATH, jsonBody, jsonLen,
+                                   "config write env");
+    arcRc = configWriteOneLocation(CONFIG_ENVARC_DIR, CONFIG_ENVARC_PATH,
+                                   CONFIG_ENVARC_TMP_PATH, jsonBody, jsonLen,
+                                   "config write envarc");
+    if (envRc == RETURN_OK && arcRc == RETURN_OK) {
         return RETURN_OK;
     }
-    DeleteFile(CONFIG_ENVARC_TMP_PATH);
+    if (envRc != RETURN_OK) {
+        streamLogLifecycle("config write env fail");
+    }
+    if (arcRc != RETURN_OK) {
+        streamLogLifecycle("config write envarc fail");
+    }
     return RETURN_ERROR;
+}
+
+static BPTR openConfigForReadAfter(ConfigReadSource after,
+                                   ConfigReadSource *source) {
+    BPTR file;
+
+    if (source != NULL) {
+        *source = CONFIG_SOURCE_NONE;
+    }
+    if (after < CONFIG_SOURCE_ENV) {
+        file = Open(CONFIG_ENV_PATH, MODE_OLDFILE);
+        if (file != 0) {
+            if (source != NULL) {
+                *source = CONFIG_SOURCE_ENV;
+            }
+            return file;
+        }
+    }
+    if (after < CONFIG_SOURCE_ENVARC) {
+        file = Open(CONFIG_ENVARC_PATH, MODE_OLDFILE);
+        if (file != 0) {
+            if (source != NULL) {
+                *source = CONFIG_SOURCE_ENVARC;
+            }
+            return file;
+        }
+    }
+    if (after < CONFIG_SOURCE_LEGACY) {
+        file = Open(CONFIG_LEGACY_PATH, MODE_OLDFILE);
+        if (file != 0) {
+            if (source != NULL) {
+                *source = CONFIG_SOURCE_LEGACY;
+            }
+            return file;
+        }
+    }
+    return 0;
+}
+
+static BPTR openConfigForRead(ConfigReadSource *source) {
+    return openConfigForReadAfter(CONFIG_SOURCE_NONE, source);
 }
 #else
 #define CONFIG_FILE_PATH "AMIGAGPT:config.json"
@@ -2015,17 +2109,7 @@ static LONG saveConfig(struct AmigaGPTConfigData *data) {
     LONG result = RETURN_ERROR;
 
 #ifdef __MORPHOS__
-    BPTR file;
-
-    ensureConfigEnvarcDir();
-    file = Open(CONFIG_ENVARC_TMP_PATH, MODE_NEWFILE);
-    if (file == 0) {
-        printf(STRING_ERROR_CONFIG_FILE_READ);
-        putchar('\n');
-        json_object_put(configJsonObject);
-        return RETURN_ERROR;
-    }
-    result = configCommitEnvarcFile(file, configJsonString, configJsonLen);
+    result = configWriteEnvAndEnvarc(configJsonString, configJsonLen);
 #else
     BPTR file = Open(CONFIG_FILE_PATH, MODE_NEWFILE);
     if (file == 0) {
@@ -2075,7 +2159,10 @@ static void readJsonString(struct json_object *jsonObj, const char *key,
 static void backupConfigFile(void) {
 #define CONFIG_BACKUP_PATH "AMIGAGPT:config.bak"
 #ifdef __MORPHOS__
-    BPTR srcFile = Open(CONFIG_ENVARC_PATH, MODE_OLDFILE);
+    BPTR srcFile = Open(CONFIG_ENV_PATH, MODE_OLDFILE);
+    if (srcFile == 0) {
+        srcFile = Open(CONFIG_ENVARC_PATH, MODE_OLDFILE);
+    }
     if (srcFile == 0) {
         srcFile = Open(CONFIG_LEGACY_PATH, MODE_OLDFILE);
     }
@@ -2107,19 +2194,96 @@ static void backupConfigFile(void) {
 static LONG loadConfig(struct AmigaGPTConfigData *data) {
 #ifdef __MORPHOS__
     ConfigReadSource source = CONFIG_SOURCE_NONE;
-    BPTR file = openConfigForRead(&source);
+    ConfigReadSource tried = CONFIG_SOURCE_NONE;
+    BPTR file = 0;
+    STRPTR configJsonString = NULL;
+    struct json_object *configJsonObject = NULL;
+    int64_t fileSize = 0;
+    BOOL envMissingAtStart = FALSE;
 
+    {
+        BPTR envProbe = Open(CONFIG_ENV_PATH, MODE_OLDFILE);
+        if (envProbe == 0) {
+            envMissingAtStart = TRUE;
+        } else {
+            Close(envProbe);
+        }
+    }
+
+    file = openConfigForRead(&source);
     if (file == 0) {
-        streamLogLifecycle("config read missing create envarc");
+        streamLogLifecycle("config read missing create env+envarc");
         saveConfig(data);
         streamLogSyncFromFlags((BOOL)data->debugStreamLog,
                                (BOOL)data->debugLifecycleLog);
         return RETURN_OK;
     }
-    if (source == CONFIG_SOURCE_ENVARC) {
-        streamLogLifecycle("config read envarc");
-    } else if (source == CONFIG_SOURCE_LEGACY) {
-        streamLogLifecycle("config read fallback amigagpt");
+
+    for (;;) {
+        struct FileInfoBlock fib;
+
+        if (source == CONFIG_SOURCE_ENV) {
+            streamLogLifecycle("config read env");
+        } else if (source == CONFIG_SOURCE_ENVARC) {
+            streamLogLifecycle("config read envarc");
+        } else if (source == CONFIG_SOURCE_LEGACY) {
+            streamLogLifecycle("config read fallback amigagpt");
+        }
+
+        ExamineFH64(file, &fib, NULL);
+        fileSize = fib.fib_Size;
+        if (fileSize <= 0 || (ULONG)fileSize > CONFIG_MAX_BYTES) {
+            streamLogLifecycle("config read size reject");
+            Close(file);
+            file = 0;
+            tried = source;
+            file = openConfigForReadAfter(tried, &source);
+            if (file == 0) {
+                return RETURN_ERROR;
+            }
+            continue;
+        }
+        streamLogLifecycle("config read size ok");
+
+        configJsonString = AllocVec((ULONG)fileSize + 1, MEMF_CLEAR);
+        if (configJsonString == NULL) {
+            Close(file);
+            streamLogLifecycle("config read alloc fail");
+            return RETURN_ERROR;
+        }
+        if (Read(file, configJsonString, (LONG)fileSize) != (LONG)fileSize) {
+            printf(STRING_ERROR_CONFIG_FILE_READ);
+            putchar('\n');
+            Close(file);
+            FreeVec(configJsonString);
+            configJsonString = NULL;
+            return RETURN_ERROR;
+        }
+        Close(file);
+        file = 0;
+        streamLogLifecycle("config read bytes ok");
+
+        configJsonObject = json_tokener_parse(configJsonString);
+        if (configJsonObject == NULL ||
+            !json_object_is_type(configJsonObject, json_type_object)) {
+            if (configJsonObject != NULL) {
+                json_object_put(configJsonObject);
+                configJsonObject = NULL;
+            }
+            FreeVec(configJsonString);
+            configJsonString = NULL;
+            streamLogLifecycle("config parse fail try next");
+            tried = source;
+            file = openConfigForReadAfter(tried, &source);
+            if (file == 0) {
+                printf(STRING_ERROR_CONFIG_FILE_PARSE);
+                putchar('\n');
+                return RETURN_ERROR;
+            }
+            continue;
+        }
+        streamLogLifecycle("config parse ok");
+        break;
     }
 #else
     BPTR file = Open(CONFIG_FILE_PATH, MODE_OLDFILE);
@@ -2128,7 +2292,6 @@ static LONG loadConfig(struct AmigaGPTConfigData *data) {
         saveConfig(data);
         return RETURN_OK;
     }
-#endif
 
 #ifdef __AMIGAOS3__
     Seek(file, 0, OFFSET_END);
@@ -2142,20 +2305,9 @@ static LONG loadConfig(struct AmigaGPTConfigData *data) {
     int64_t fileSize = fib.fib_Size;
 #endif
 #endif
-#ifdef __MORPHOS__
-    if (fileSize <= 0 || (ULONG)fileSize > CONFIG_MAX_BYTES) {
-        streamLogLifecycle("config read size reject");
-        Close(file);
-        return RETURN_ERROR;
-    }
-    streamLogLifecycle("config read size ok");
-#endif
     STRPTR configJsonString = AllocVec(fileSize + 1, MEMF_CLEAR);
     if (configJsonString == NULL) {
         Close(file);
-#ifdef __MORPHOS__
-        streamLogLifecycle("config read alloc fail");
-#endif
         return RETURN_ERROR;
     }
     if (Read(file, configJsonString, fileSize) != fileSize) {
@@ -2167,9 +2319,6 @@ static LONG loadConfig(struct AmigaGPTConfigData *data) {
     }
 
     Close(file);
-#ifdef __MORPHOS__
-    streamLogLifecycle("config read bytes ok");
-#endif
 
     struct json_object *configJsonObject = json_tokener_parse(configJsonString);
     if (configJsonObject == NULL) {
@@ -2178,15 +2327,6 @@ static LONG loadConfig(struct AmigaGPTConfigData *data) {
         FreeVec(configJsonString);
         return RETURN_ERROR;
     }
-#ifdef __MORPHOS__
-    if (!json_object_is_type(configJsonObject, json_type_object)) {
-        json_object_put(configJsonObject);
-        printf(STRING_ERROR_CONFIG_FILE_PARSE);
-        putchar('\n');
-        FreeVec(configJsonString);
-        return RETURN_ERROR;
-    }
-    streamLogLifecycle("config parse ok");
 #endif
 
     struct json_object *valueObj;
@@ -2796,7 +2936,17 @@ static LONG loadConfig(struct AmigaGPTConfigData *data) {
         /* Save migrated config */
         FreeVec(configJsonString);
         json_object_put(configJsonObject);
+#ifdef __MORPHOS__
+        /* ENV existed but was unreadable and we loaded a fallback ? do not
+         * overwrite the corrupt ENV (may still hold keys ENVARC lacks). */
+        if (!envMissingAtStart && source != CONFIG_SOURCE_ENV) {
+            streamLogLifecycle("config migrate skip overwrite unreadable env");
+        } else {
+            saveConfig(data);
+        }
+#else
         saveConfig(data);
+#endif
 
         printf("Config migration complete. Your old settings have been "
                "preserved.\n");
@@ -2955,13 +3105,29 @@ static LONG loadConfig(struct AmigaGPTConfigData *data) {
                 freeString(&data->openAiChatSystem);
                 data->openAiChatSystem = copyString(data->chatSystem);
             }
+#ifdef __MORPHOS__
+            if (!envMissingAtStart && source != CONFIG_SOURCE_ENV) {
+                streamLogLifecycle(
+                    "config profile migrate skip overwrite unreadable env");
+            } else {
+                saveConfig(data);
+            }
+#else
             saveConfig(data);
+#endif
         }
     }
 
     FreeVec(configJsonString);
     json_object_put(configJsonObject);
 #ifdef __MORPHOS__
+    /* Only seed ENV from ENVARC/legacy when ENV was absent. Never overwrite a
+     * present-but-unparseable ENV with a fallback (would destroy keys). */
+    if (envMissingAtStart &&
+        (source == CONFIG_SOURCE_ENVARC || source == CONFIG_SOURCE_LEGACY)) {
+        streamLogLifecycle("config sync env+envarc from fallback");
+        saveConfig(data);
+    }
     streamLogSyncFromFlags((BOOL)data->debugStreamLog,
                            (BOOL)data->debugLifecycleLog);
 #endif

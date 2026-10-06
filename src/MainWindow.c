@@ -168,39 +168,87 @@ static void finishChatStream(ChatStreamOutcome outcome, UTF8 *receivedMessage,
 static void appendMessageFileSummary(struct ConversationNode *message);
 static LONG loadConversations();
 static LONG saveConversations();
+#ifdef __MORPHOS__
+#define LAST_CONVERSATION_ENV_DIR "ENV:AmigaGPT"
+#define LAST_CONVERSATION_ENV_PATH "ENV:AmigaGPT/last-conversation"
+#define LAST_CONVERSATION_ENVARC_DIR "ENVARC:AmigaGPT"
+#define LAST_CONVERSATION_ENVARC_PATH "ENVARC:AmigaGPT/last-conversation"
+#else
 #define LAST_CONVERSATION_DIR "ENVARC:AmigaGPT"
 #define LAST_CONVERSATION_PATH "ENVARC:AmigaGPT/last-conversation"
+#endif
 #define LAST_CONVERSATION_LEGACY "AMIGAGPT:last-conversation.txt"
 #define LAST_CONVERSATION_NAME_MAX 512
 
-static void ensureLastConversationEnvarcDir(void) {
-    CreateDir(LAST_CONVERSATION_DIR);
+static BOOL writeLastConversationPath(CONST_STRPTR dir, CONST_STRPTR path,
+                                      CONST_STRPTR name, LONG nameLen) {
+    BPTR file;
+    LONG wrote;
+
+    if (dir != NULL) {
+        CreateDir(dir);
+    }
+    file = Open(path, MODE_NEWFILE);
+    if (file == 0) {
+        return FALSE;
+    }
+    wrote = Write(file, name, nameLen);
+    Close(file);
+    if (wrote != nameLen) {
+        /* Partial/empty file would shadow a good ENVARC copy on restore. */
+        DeleteFile(path);
+        return FALSE;
+    }
+    return TRUE;
 }
 
 static void saveLastSelectedConversationName(struct Conversation *conversation) {
-    BPTR file;
+    LONG nameLen;
 
     if (conversation == NULL || conversation->name == NULL ||
         conversation->name[0] == '\0') {
         return;
     }
-    ensureLastConversationEnvarcDir();
-    file = Open(LAST_CONVERSATION_PATH, MODE_NEWFILE);
-    if (file == 0) {
-        return;
-    }
-    Write(file, conversation->name, (LONG)strlen(conversation->name));
-    Close(file);
+    nameLen = (LONG)strlen(conversation->name);
+#ifdef __MORPHOS__
+    writeLastConversationPath(LAST_CONVERSATION_ENV_DIR,
+                              LAST_CONVERSATION_ENV_PATH, conversation->name,
+                              nameLen);
+    writeLastConversationPath(LAST_CONVERSATION_ENVARC_DIR,
+                              LAST_CONVERSATION_ENVARC_PATH, conversation->name,
+                              nameLen);
+#else
+    writeLastConversationPath(LAST_CONVERSATION_DIR, LAST_CONVERSATION_PATH,
+                              conversation->name, nameLen);
+#endif
 }
 
-static BPTR openLastConversationFile(void) {
-    BPTR file = Open(LAST_CONVERSATION_PATH, MODE_OLDFILE);
+#ifdef __MORPHOS__
+static BPTR openLastConversationSource(UBYTE which) {
+    switch (which) {
+    case 0:
+        return Open(LAST_CONVERSATION_ENV_PATH, MODE_OLDFILE);
+    case 1:
+        return Open(LAST_CONVERSATION_ENVARC_PATH, MODE_OLDFILE);
+    case 2:
+        return Open(LAST_CONVERSATION_LEGACY, MODE_OLDFILE);
+    default:
+        return 0;
+    }
+}
+#endif
 
+#ifndef __MORPHOS__
+static BPTR openLastConversationFile(void) {
+    BPTR file;
+
+    file = Open(LAST_CONVERSATION_PATH, MODE_OLDFILE);
     if (file == 0) {
         file = Open(LAST_CONVERSATION_LEGACY, MODE_OLDFILE);
     }
     return file;
 }
+#endif
 
 static BOOL restoreLastSelectedConversation(void) {
     BPTR file;
@@ -209,10 +257,65 @@ static BOOL restoreLastSelectedConversation(void) {
     LONG total;
     LONG i;
     BOOL restored = FALSE;
+#ifdef __MORPHOS__
+    UBYTE which;
+#endif
 
     if (conversationListObject == NULL) {
         return FALSE;
     }
+#ifdef __MORPHOS__
+    for (which = 0; which < 3 && !restored; which++) {
+        file = openLastConversationSource(which);
+        if (file == 0) {
+            continue;
+        }
+        {
+            struct FileInfoBlock fib;
+
+            ExamineFH64(file, &fib, NULL);
+            fileSize = (LONG)fib.fib_Size;
+        }
+        if (fileSize <= 0 || fileSize >= LAST_CONVERSATION_NAME_MAX) {
+            Close(file);
+            streamLogLifecycle("restore last conversation skip empty");
+            continue;
+        }
+        nameBuf = AllocVec((ULONG)fileSize + 1, MEMF_CLEAR);
+        if (nameBuf == NULL) {
+            Close(file);
+            return FALSE;
+        }
+        if (Read(file, nameBuf, fileSize) != fileSize) {
+            FreeVec(nameBuf);
+            Close(file);
+            continue;
+        }
+        Close(file);
+        nameBuf[fileSize] = '\0';
+
+        get(conversationListObject, MUIA_NList_Entries, &total);
+        for (i = 0; i < total; i++) {
+            struct Conversation *conversation = NULL;
+
+            DoMethod(conversationListObject, MUIM_NList_GetEntry, i,
+                     &conversation);
+            if (conversation != NULL && conversation->name != NULL &&
+                strcmp(conversation->name, nameBuf) == 0) {
+                DoMethod(conversationListObject, MUIM_NList_SetActive, i, NULL);
+                streamLogLifecycle("restore last conversation ok");
+                saveLastSelectedConversationName(conversation);
+                restored = TRUE;
+                break;
+            }
+        }
+        FreeVec(nameBuf);
+    }
+    if (!restored) {
+        streamLogLifecycle("restore last conversation miss");
+    }
+    return restored;
+#else
     file = openLastConversationFile();
     if (file == 0) {
         return FALSE;
@@ -224,10 +327,12 @@ static BOOL restoreLastSelectedConversation(void) {
 #ifdef __AMIGAOS4__
     fileSize = (LONG)GetFileSize(file);
 #else
-    struct FileInfoBlock fib;
+    {
+        struct FileInfoBlock fib;
 
-    ExamineFH64(file, &fib, NULL);
-    fileSize = (LONG)fib.fib_Size;
+        ExamineFH64(file, &fib, NULL);
+        fileSize = (LONG)fib.fib_Size;
+    }
 #endif
 #endif
     if (fileSize <= 0 || fileSize >= LAST_CONVERSATION_NAME_MAX) {
@@ -266,6 +371,7 @@ static BOOL restoreLastSelectedConversation(void) {
     }
     FreeVec(nameBuf);
     return restored;
+#endif
 }
 
 #ifdef __MORPHOS__
