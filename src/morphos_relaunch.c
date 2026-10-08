@@ -303,8 +303,8 @@ BOOL morphosRelaunchStartupGuard(void) {
         morphosStartupShowAlert(
             "AmigaGPT is already running, or the previous instance is still "
             "closing.\n\nWait a few seconds, then start once.\n\nIf nothing "
-            "happens, check T:amigagpt_startup.last and "
-            "T:amigagpt_shutdown.last.");
+            "happens, check Work:Tmp/amigagpt_startup.last and "
+            "Work:Tmp/amigagpt_shutdown.last.");
         return FALSE;
     }
 

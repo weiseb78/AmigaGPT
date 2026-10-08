@@ -12,14 +12,15 @@ Diagnose über persistentes Lifecycle-Log (`AMIGAGPT:amigagpt_lifecycle.log`).
 
 ---
 
-## 1b. Persistenz: ENVARC, AMIGAGPT, T:
+## 1b. Persistenz: ENVARC, AMIGAGPT, T:, Work:Tmp
 
 | Ort | Persistent? | Inhalt |
 | --- | ----------- | ------ |
 | **ENV:** | Nein (RAM, aktuelle Session) | App-Prefs lesen hier: `ENV:AmigaGPT/config.json`, `ENV:AmigaGPT/last-conversation` |
 | **ENVARC:** | Ja (über Neustart) | MUI: `ENVARC:mui/AmigaGPT.prefs` (`Application_Save`/`Load`); App schreibt Prefs parallel nach `ENVARC:AmigaGPT/` (gleiche Dateinamen) — Boot kopiert Archive → ENV |
 | **AMIGAGPT:** | Ja (Daten-Volume) | `chat-history.json`, `image-history.json`, Bilder unter `images/` — **kein** UI-Zustand/Prefs mehr (Legacy: `config.json`, `last-conversation.txt` werden einmalig migriert); Lifecycle-Log `amigagpt_lifecycle.log` |
-| **T:** | Nein (RAM) | Relaunch-Locks (`amigagpt_instance.lock`, `amigagpt_teardown.lock`); Spiegel `T:amigagpt_lifecycle.log` (nur mit `debugLifecycleLog`); **`T:amigagpt_shutdown.last`** / **`T:amigagpt_startup.last`** (je eine Zeile) |
+| **Work:Tmp/** | Ja (Festplatte) | MorphOS-Debug nach Hard-Reset: `amigagpt_stream.log`, `amigagpt_lifecycle.log` (Spiegel), `amigagpt_startup.last` / `amigagpt_shutdown.last` — siehe [PHASE-9-DEBUG-LOGS.md](PHASE-9-DEBUG-LOGS.md) |
+| **T:** | Nein (RAM) | Relaunch-Locks (`amigagpt_instance.lock`, `amigagpt_teardown.lock`) — nach Reset weg |
 
 **Warum nicht nur MUI-ENVARC für die aktive Konversation?**  
 `Application_Load` läuft in `createMainWindow()` **vor** `loadConversations()` — die NList ist noch leer; ein zweites Load **nach** `loadConversations()` hat die NList beim Restart kaputt gemacht (nicht wieder einführen). Beim Quit wird die Liste in `mainWindowPrepareShutdown()` **geleert**, **bevor** `Application_Save` — die aktive Zeile landet so oft nicht in `AmigaGPT.prefs`. Daher eigener Eintrag `ENV:`/`ENVARC:AmigaGPT/last-conversation` (Chat-**Name**, nach `loadConversations()` per `restoreLastSelectedConversation()`).
@@ -105,11 +106,93 @@ Lesen: `ENV:` zuerst, dann `ENVARC:`, dann Legacy `AMIGAGPT:`. Schreiben immer *
 
 | Maßnahme | Datei | Was |
 | -------- | ----- | --- |
-| **Persistentes Log** | `streamlog.c` | `AMIGAGPT:amigagpt_lifecycle.log` + Spiegel `T:amigagpt_lifecycle.log` — nur wenn `debugLifecycleLog: true` in `config.json` (Default **aus**) |
+| **Persistentes Log** | `streamlog.c` | `AMIGAGPT:amigagpt_lifecycle.log` + Spiegel `Work:Tmp/amigagpt_lifecycle.log` — nur wenn `debugLifecycleLog: true` in `config.json` (Default **aus**) |
+| **Stream-Log (MorphOS)** | `streamlog.c` | `Work:Tmp/amigagpt_stream.log` wenn `debugStreamLog: true` — überlebt Hard-Reset (früher `T:`) |
 | **Fein granulare Phasen** | überall `streamLogLifecycle()` | Startup, createMainWindow, chat settext/styling, shutdown, app-create retry |
 | **KPrintF-Spiegel** | `streamLogLifecycle()` | `[AmigaGPT lifecycle]` auf Debug-Kanal (nur mit `debugLifecycleLog`) |
 
 Für Restart-Stress-Tests: `"debugLifecycleLog": true` setzen, App neu starten, danach Block R (§8). Für Alltag beide Debug-Flags **false** lassen.
+
+---
+
+## 6b. Warum MCP noch geht, wenn die GUI tot ist
+
+Beobachtung beim Chat-/Scintilla-Freeze: Maus/Tastatur und Workbench wirken tot („Application is meditating“ oder kompletter UI-Freeze, oft nur per Reset lösbar) — **Cursor/MCP (`mcpd`) auf Port 4322 antwortet trotzdem** (`fs_read`, `fs_list`, manchmal `exec_cmd` / `Reboot`).
+
+### Getrennte Tasks
+
+| Komponente | Task | Braucht Intuition / `NewInput`? |
+| ---------- | ---- | ------------------------------- |
+| **AmigaGPT** | eigener MUI-Prozess | Ja — Hauptschleife `MUIM_Application_NewInput`, Scintilla-Zeichen, Fenster, Eingabe |
+| **mcpd** | eigener Hintergrund-Prozess (MCP-Daemon) | Nein für Datei/Netz-Kommandos — TCP-Server + DOS/`exec` |
+
+MorphOS plant Tasks getrennt. Hängt **nur** der AmigaGPT-Task (oder der Input-/Redraw-Pfad, den er blockiert), bleibt der TCP-Stack und **mcpd** oft schedulbar. Deshalb kann der Agent von WSL aus Logs unter `Work:Tmp/` lesen und ggf. `Reboot` auslösen, obwohl lokal keine Maus mehr geht.
+
+### Was typischerweise stecken bleibt
+
+AmigaGPT (und klassische Amiga-UI) laufen kooperativ über Intuition/`input.device` und MUI. Schwere Arbeit **im UI-Task** — z. B. ein großer `SCI_APPENDTEXT` / Font-/Wrap-Lauf in Scintilla — blockiert lange oder dauerhaft:
+
+- keine sinnvollen Input-Events mehr
+- keine Fenster-Redraws
+- andere MUI-Apps wirken oft mit „tot“, obwohl der Kernel und Netz noch laufen
+
+Das ist **kein** Beweis, dass „das ganze OS tot“ ist — nur, dass der **GUI-/Input-Pfad** nicht mehr bedienbar ist. Ein echter Hard-Lock (langes `Forbid`/`Disable`, kaputtes `input.device` ohne Scheduling) kann MCP ebenfalls killen; wenn MCP noch antwortet, war es in der Praxis meist der GUI-Pfad.
+
+### Diagnose-Nutzen
+
+1. Flags an: `debugLifecycleLog` / `debugStreamLog` (siehe [PHASE-9-DEBUG-LOGS.md](PHASE-9-DEBUG-LOGS.md)).
+2. Freeze reproduzieren → **nicht** erwarten, dass `T:`-Logs den Reset überleben.
+3. Per MCP lesen: letzte Zeilen in `Work:Tmp/amigagpt_lifecycle.log` (und ggf. `AMIGAGPT:amigagpt_lifecycle.log`) — oft endet die Spur genau vor dem hängenden SCI-Befehl (z. B. `chat scintilla replace append begin` ohne `… done`).
+4. Optional: MCP `Reboot` (explizit freigeben), danach Logs erneut lesen.
+
+### Was MCP nicht rettet
+
+- Screenshot/`SGrab`, wenn Intuition verkeilt ist
+- „App sauber beenden“ ohne Reset, wenn AmigaGPT im Meditate steckt
+- Inhalte nur in RAM (`T:`), die nie auf Platte geschrieben wurden
+
+**Kurz:** MCP ≠ GUI. Daemon und Netz können leben, während AmigaGPT/Scintilla den Desktop eingefroren haben — genau deshalb persistente Logs unter `Work:Tmp/` / `AMIGAGPT:`.
+
+---
+
+## 6c. GUI-Task belasten — warum das gegen Desktop-Instinkt geht
+
+**Gefühl (Windows/Linux/macOS):** Schwere Text-/Dokument-Arbeit gehört **nicht** in den UI-Thread. Richtig dort: Worker-Thread, `ILoader`/Background-Load, dann fertiges Dokument an die View hängen.
+
+**MorphOS/MUI-Realität:** Es gibt keinen sicheren „UI-Thread + Worker für Scintilla“ wie bei Qt/Win32. MUI, Intuition und die App-Hauptschleife (`MUIM_Application_NewInput`) laufen im **selben Task**. Scintilla.mcc wird über `SCI_Command` **in diesem Task** bedient. Ein zweiter Thread, der in die Klasse schreibt, ist riskant bis undefiniert — auch wenn `pthread` unter MorphOS existiert.
+
+### Was andere Apps typischerweise tun
+
+| Umgebung | Typisches Muster |
+| -------- | ---------------- |
+| MorphOS Mail/Editor (YAM & Co.) | **TextEditor.mcc**, Text einmal setzen — kein SSE-Stream, kein Full-Rebuild großer Chat-Historien |
+| Desktop-Scintilla (SciTE & Co.) | oft **inkrementell** oder `SCI_CREATELOADER` / `ILoader` aus einem **Hintergrund-Thread** |
+| AmigaGPT Chat (MorphOS) | Workarounds im **UI-Task**, weil `CLEARALL`/`SETTEXT` auf großen Docs einfrieren |
+
+AmigaGPT macht also **nicht** „was alle MorphOS-Apps so machen“, sondern kompensiert Scintilla.mcc-Grenzen plus Chat-Stream-Last.
+
+### Warum kein Scintilla-Background-Load (`ILoader`)
+
+1. **API/SDK:** `SCI_CREATELOADER` / `ILoader` ist für Desktop-Ports gedacht; im hier genutzten MorphOS-SDK liegt das nicht als klar nutzbare, dokumentierte App-API bereit.
+2. **Thread-Modell:** Der Loader nützt vor allem, wenn `AddData` **außerhalb** des UI-Tasks läuft. Ohne sicheren Worker bleibt `AddData` im GUI-Task — dann ist es kein echter Background-Load.
+3. **Danach trotzdem UI:** `ConvertToDocument` / `SETDOCPOINTER`, Wrap, Role-Styles, Hotspots laufen wieder im UI-Task — genau die teuren Schritte bei Periodensystem-Größe.
+4. **Bisheriger Fokus:** Freeze-Mitigation (kein Live-Paint, Docswap + Chunk-`APPENDTEXT`, Yields) statt einer neuen Thread-/Loader-Architektur.
+
+### Was der richtige MorphOS-Instinkt ist
+
+Nicht: „Arbeit woanders hin verlagern“ (Desktop-Reflex).  
+Sondern: **weniger und seltener** im GUI-Pfad.
+
+| Regel | Praxis in AmigaGPT |
+| ----- | ------------------ |
+| Während SSE **nicht** malen | `morphosChatLiveScintillaUpdates` — Buffer nur im RAM |
+| Am Ende **ein** Paint, so leicht wie möglich | Raw-Pfad, Chunk-`APPENDTEXT`, MUI-Yields dazwischen |
+| Kein Markdown/Hotspot-Scan auf Riesen-Puffern live | Midi-Markdown/Links nach Stream; Hotspots bei großen Texten überspringen |
+| Lifecycle-Log bei Freeze | Spur endet oft bei `chat scintilla replace append begin` ohne `… done` (§6b) |
+
+**Phase 13** in [SCINTILLA-ARCHITECTURE.md](SCINTILLA-ARCHITECTURE.md) („Worker / UI-Batching“) meint deshalb **nicht** automatisch Desktop-`ILoader`, sondern höchstens: Arbeit in kleinere UI-Batches / kontrollierte Yields zerlegen — und nur, wenn R3 auf Hardware nicht reicht.
+
+**Merksatz:** Instinkt „GUI-Thread nicht belasten“ ist richtig; auf MorphOS heißt die Antwort meist **Last reduzieren und stückeln**, nicht **in einen Worker verschieben**.
 
 Typische **gute** Raw-Kette im Log:
 
@@ -154,7 +237,7 @@ Ursache: keine aktive NList-Zeile und kein gespeicherter Chat-Name → mit `ENVA
 
 - **Markdown mit Haken an** nach Stream / bei sehr großen Chats → teurer Pfad (`markdown begin`); bei Freeze Markdown per Menü **aus** testen.
 - **Scintilla-Wheel** zwischen Chat- und Code-Fenster — plattformbedingt, nur zurückhaltend workarounden.
-- **Totaler System-Freeze** — Log schreibt ggf. nicht bis zum Absturz; nach Reboot `AMIGAGPT:`-Log lesen.
+- **GUI-/Scintilla-Freeze** — MCP oft noch erreichbar (§6b); nach Reboot `Work:Tmp/` + `AMIGAGPT:`-Logs lesen. Architektur-Kontext: §6c (GUI-Task vs. Desktop-`ILoader`).
 
 ---
 

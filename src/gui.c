@@ -367,8 +367,8 @@ retryCreateApp:
         morphosStartupShowAlert(
             "AmigaGPT could not start (MUI application busy).\n\n"
             "If you just quit, wait 5 seconds and try once.\n\n"
-            "Diagnostics: T:amigagpt_startup.last and "
-            "T:amigagpt_shutdown.last");
+            "Diagnostics: Work:Tmp/amigagpt_startup.last and "
+            "Work:Tmp/amigagpt_shutdown.last");
 #else
         displayError(STRING_ERROR_APP_CREATE);
 #endif

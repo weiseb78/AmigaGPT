@@ -63,6 +63,8 @@ static STRPTR dupStringAlloc(CONST_STRPTR src) {
 #define CONVERSATION_TITLE_FALLBACK_MAX 96
 /** UI refresh during stream: at most ~5 updates per second (R3). */
 #define STREAM_UI_MIN_REFRESH_MS 200
+/** Above this, skip live Scintilla during stream (paint once at end). */
+#define STREAM_UI_LIVE_SCINTILLA_MAX 2048UL
 
 static struct timeval streamUiLastRefresh;
 static BOOL streamUiLastRefreshValid;
@@ -75,6 +77,8 @@ static BOOL streamUiLastRefreshValid;
  * §5 / R3: kein Markdown-Parse pro Chunk. Cleared in `finishChatStream` and on early exits.
  */
 static BOOL morphosChatStreamRawScintillaRefresh = FALSE;
+/** TRUE only while SSE chunks arrive; FALSE for final paint after stream. */
+static BOOL morphosChatLiveScintillaUpdates = FALSE;
 #endif
 
 typedef enum { STYLE_BOLD, STYLE_ITALIC, STYLE_UNDERLINE } StyleType;
@@ -127,6 +131,7 @@ Object *chatOutputScroller;
 Object *chatOutputTextEditor;
 Object *statusBar;
 Object *conversationListObject;
+Object *conversationListViewObject;
 Object *loadingBar;
 Object *loadingBarGroup;
 Object *imageInputTextEditor;
@@ -146,6 +151,8 @@ static struct MinList pendingChatFiles;
 static BOOL pendingChatFilesInitialized = FALSE;
 WORD pens[NUMDRIPENS + 1];
 struct Conversation *currentConversation = NULL;
+/** TRUE while sendChatMessage/finishChatStream runs (MUI may pump). */
+static BOOL chatSendInProgress = FALSE;
 struct GeneratedImage *currentImage = NULL;
 static STRPTR pages[3] = {NULL};
 
@@ -164,7 +171,14 @@ typedef enum {
 static ChatStreamOutcome chatStreamClassifyOutcome(UTF8 *receivedMessage);
 static void finishChatStream(ChatStreamOutcome outcome, UTF8 *receivedMessage,
                              ULONG speechUtf8Index, BOOL isNewConversation,
-                             struct MinList *receivedFiles, BOOL requestStream);
+                             struct MinList *receivedFiles, BOOL requestStream,
+                             struct Conversation *streamConversation);
+static BOOL conversationListContains(struct Conversation *conversation);
+#ifdef __MORPHOS__
+static void setConversationListInputEnabled(BOOL enabled);
+static void conversationListReselectCurrent(void);
+static void morphosSchedulePendingConversationSelect(void);
+#endif
 static void appendMessageFileSummary(struct ConversationNode *message);
 static LONG loadConversations();
 static LONG saveConversations();
@@ -768,6 +782,12 @@ HOOKPROTONHNONP(ChatOutputRefreshDeferredFunc, void) {
     streamLogLifecycle("displayConversation scintilla refresh begin");
     chatOutputUpdateFromBuffer(preserve);
     chatOutputMorphosListRefreshActive = FALSE;
+    /* Mid-stream a deferred refresh must not clear raw/live flags -- that
+     * forced the markdown+docswap path on every SSE batch and froze OS. */
+    if (!chatSendInProgress) {
+        morphosChatStreamRawScintillaRefresh = FALSE;
+        morphosChatLiveScintillaUpdates = FALSE;
+    }
     streamLogLifecycle("displayConversation scintilla refresh done");
 }
 MakeHook(ChatOutputRefreshDeferredHook, ChatOutputRefreshDeferredFunc);
@@ -801,10 +821,18 @@ void morphosScheduleChatOutputRefreshFromList(void) {
 static void morphosApplyPendingConversationSelection(void) {
     struct Conversation *conversation = conversationRowPending;
 
-    conversationRowPending = NULL;
     if (mainWindowIsShuttingDown() || conversation == NULL) {
+        conversationRowPending = NULL;
         return;
     }
+    /* During send, keep the click queued. Messages stay pinned to the
+     * stream conversation; after send we apply this selection so the UI
+     * shows the chat the user picked, not the one that was streaming. */
+    if (chatSendInProgress) {
+        streamLogLifecycle("conversation select kept pending during chat send");
+        return;
+    }
+    conversationRowPending = NULL;
     currentConversation = conversation;
     saveLastSelectedConversationName(currentConversation);
     streamLogLifecycle("conversation select deferred begin");
@@ -836,7 +864,8 @@ static void morphosFlushPendingPushMethods(void) {
     streamLogLifecycle("morphos flush pushmethods begin");
     for (pass = 0; pass < 12; pass++) {
         BOOL hadPending = chatOutputRefreshPending ||
-                          (conversationRowPending != NULL) ||
+                          (!chatSendInProgress &&
+                           conversationRowPending != NULL) ||
                           chatOutputScintillaHasDeferredWorkPending();
 
         (void)DoMethod(app, MUIM_Application_CheckRefresh);
@@ -873,6 +902,16 @@ HOOKPROTONHNONP(ConversationRowClickedDeferredFunc, void) {
     morphosApplyPendingConversationSelection();
 }
 MakeHook(ConversationRowClickedDeferredHook, ConversationRowClickedDeferredFunc);
+
+static void morphosSchedulePendingConversationSelect(void) {
+    if (conversationRowPending == NULL || app == NULL ||
+        mainWindowIsShuttingDown() || !morphosConversationSelectEnabled) {
+        return;
+    }
+    streamLogLifecycle("conversation select schedule after chat send");
+    DoMethod(app, MUIM_Application_PushMethod, app, 2, MUIM_CallHook,
+             &ConversationRowClickedDeferredHook);
+}
 
 static void morphosEnableConversationSelect(void) {
     struct Conversation *active = NULL;
@@ -914,6 +953,11 @@ HOOKPROTONHNONP(ConversationRowClickedFunc, void) {
     DoMethod(conversationListObject, MUIM_NList_GetEntry,
              MUIV_NList_GetEntry_Active, &conversation);
     if (conversation == NULL || app == NULL) {
+        return;
+    }
+    if (chatSendInProgress) {
+        conversationRowPending = conversation;
+        streamLogLifecycle("conversation select queued during chat send");
         return;
     }
     conversationRowPending = conversation;
@@ -2227,6 +2271,12 @@ void chatOutputUpdateFromBuffer(BOOL preserveViewport) {
         chatOutputTextEditor == NULL || chatOutputTextEditorContents == NULL) {
         return;
     }
+#ifdef __MORPHOS__
+    /* Recover if a prior send left live-skip stuck (Markdown/hotspots dead). */
+    if (!chatSendInProgress) {
+        morphosChatLiveScintillaUpdates = FALSE;
+    }
+#endif
 
     textLen = (ULONG)strlen(chatOutputTextEditorContents);
     if (textLen == 0) {
@@ -2252,37 +2302,33 @@ void chatOutputUpdateFromBuffer(BOOL preserveViewport) {
 
 #ifdef __MORPHOS__
             {
+                /* displayConversation uses RefreshFromList; that must NOT force
+                 * raw on large tables -- Markdown menu uses plain Refresh and
+                 * formats correctly. Raw only: markdown off, mid-stream flag, CJK. */
                 BOOL morphosUseRawRefresh =
                     !configGetMarkdownFormatting() ||
                     morphosChatStreamRawScintillaRefresh ||
                     utf8_contains_cjk(
                         (const UBYTE *)chatOutputTextEditorContents);
 
+                /* SSE live window only -- finishChatStream clears this first
+                 * so the final paint can run while chatSendInProgress is set. */
+                if (morphosChatLiveScintillaUpdates) {
+                    FreeVec(roleStyles);
+                    return;
+                }
+
+                /* List/final rebuild: skip GOTOPOS; still allow Midi-Markdown. */
+                chatOutputScintillaMorphosSkipViewport =
+                    chatOutputMorphosListRefreshActive;
+
                 if (morphosUseRawRefresh) {
-                    if (morphosChatStreamRawScintillaRefresh) {
-                        streamLogLifecycle(
-                            "chatOutput refresh stream raw path");
-                        chatOutputScintillaMorphosSkipViewport = TRUE;
-                        if (chatOutputScintillaAppendStreamDelta(
-                                chatOutputTextEditor, chatOutputTextEditorContents,
-                                textLen, roleStyles, textLen)) {
-                            streamLogLifecycle(
-                                "chatOutputUpdateFromBuffer scintilla append done");
-#ifdef __MORPHOS__
-                            chatUserNavRebuild(roleStyles, textLen);
-                            chatFindScintillaUpdateCounter(chatOutputTextEditor);
-#endif
-                            FreeVec(roleStyles);
-                            return;
-                        }
-                        streamLogLifecycle(
-                            "chat stream append fallback settext");
-                    } else {
-                        streamLogLifecycle("chatOutput refresh raw path");
-                        chatOutputScintillaMorphosSkipViewport =
-                            chatOutputMorphosListRefreshActive;
+                    streamLogLifecycle("chatOutput refresh raw path");
+                    /* Hotspot scan on multi-KB tables freezes before paint. */
+                    if (textLen <= (STREAM_UI_LIVE_SCINTILLA_MAX * 4UL)) {
                         chatOutputScintillaAugmentStyleBytesHotspots(
-                            chatOutputTextEditorContents, roleStyles, textLen);
+                            chatOutputTextEditorContents, roleStyles,
+                            textLen);
                     }
                     streamLogLifecycle(
                         "chatOutputUpdateFromBuffer scintilla raw begin");
@@ -2292,10 +2338,8 @@ void chatOutputUpdateFromBuffer(BOOL preserveViewport) {
                         roleStyles, textLen, preserveViewport);
                     streamLogLifecycle(
                         "chatOutputUpdateFromBuffer scintilla raw done");
-#ifdef __MORPHOS__
                     chatUserNavRebuild(roleStyles, textLen);
                     chatFindScintillaUpdateCounter(chatOutputTextEditor);
-#endif
                     FreeVec(roleStyles);
                     return;
                 }
@@ -2307,11 +2351,11 @@ void chatOutputUpdateFromBuffer(BOOL preserveViewport) {
             }
 #endif
 
-            displayText = (char *)AllocVec((textLen * 2) + 1, MEMF_ANY);
-            displayStyles = (UBYTE *)AllocVec(textLen * 2, MEMF_ANY);
+            displayText = (char *)AllocVec((textLen * 4) + 1, MEMF_ANY);
+            displayStyles = (UBYTE *)AllocVec(textLen * 4, MEMF_ANY);
 
             if (displayText != NULL && displayStyles != NULL) {
-                ULONG displayCap = textLen * 2;
+                ULONG displayCap = textLen * 4;
 
                 streamLogLifecycle("chatOutputUpdateFromBuffer markdown begin");
                 textLen = chatOutputScintillaBuildMidiMarkdownDisplay(
@@ -2697,7 +2741,7 @@ LONG createMainWindow() {
                                 MUIA_InputMode, MUIV_InputMode_RelVerify,
                             TAG_DONE),
                             // Conversation list
-                            Child, NListviewObject,
+                            Child, conversationListViewObject = NListviewObject,
                                 MUIA_CycleChain, 1,
                                 MUIA_NListview_NList, conversationListObject = NListObject,
                                     MUIA_ContextMenu, NULL,
@@ -3083,6 +3127,7 @@ void mainWindowInvalidateAfterShutdown(void) {
     chatOutputTextEditor = NULL;
     statusBar = NULL;
     conversationListObject = NULL;
+    conversationListViewObject = NULL;
     loadingBar = NULL;
     imageInputTextEditor = NULL;
     createImageButton = NULL;
@@ -3180,13 +3225,11 @@ static BOOL streamUiShouldRefresh(UWORD chunkCount) {
 static void streamUiFlushChatDisplay(void) {
 #ifdef __MORPHOS__
     /*
-     * Live Scintilla redraw of CJK via TTEngine/DejaVu freezes MorphOS and
-     * stalls the SSL read loop (status stuck on "Antwort wird heruntergeladen").
-     * Keep the UTF-8 buffer updated; paint once after the stream ends.
+     * Any live Scintilla during send (markdown/docswap/styles per SSE batch)
+     * eventually hard-freezes MorphOS. Keep the UTF-8 buffer only; paint once
+     * after the stream ends (finishChatStream / displayConversation).
      */
-    if (morphosChatStreamRawScintillaRefresh &&
-        chatOutputTextEditorContents != NULL &&
-        utf8_contains_cjk((const UBYTE *)chatOutputTextEditorContents)) {
+    if (morphosChatLiveScintillaUpdates) {
         return;
     }
     chatOutputUpdateFromBuffer(FALSE);
@@ -3374,15 +3417,76 @@ static CONST_STRPTR chatStreamOutcomeName(ChatStreamOutcome outcome) {
     }
 }
 
+
+#ifdef __MORPHOS__
+static void setConversationListInputEnabled(BOOL enabled) {
+    if (conversationListObject != NULL) {
+        set(conversationListObject, MUIA_Disabled, !enabled);
+    }
+    if (conversationListViewObject != NULL) {
+        set(conversationListViewObject, MUIA_Disabled, !enabled);
+    }
+}
+
+static void conversationListReselectCurrent(void) {
+    LONG total = 0;
+    LONG i;
+
+    if (currentConversation == NULL || conversationListObject == NULL) {
+        return;
+    }
+    get(conversationListObject, MUIA_NList_Entries, &total);
+    for (i = 0; i < total; i++) {
+        struct Conversation *entry = NULL;
+        DoMethod(conversationListObject, MUIM_NList_GetEntry, i, &entry);
+        if (entry == currentConversation) {
+            set(conversationListObject, MUIA_NList_Quiet, TRUE);
+            DoMethod(conversationListObject, MUIM_NList_SetActive, i, NULL);
+            set(conversationListObject, MUIA_NList_Quiet, FALSE);
+            return;
+        }
+    }
+}
+#endif
+
+static BOOL conversationListContains(struct Conversation *conversation) {
+    LONG total = 0;
+    LONG i;
+
+    if (conversation == NULL || conversationListObject == NULL) {
+        return FALSE;
+    }
+    get(conversationListObject, MUIA_NList_Entries, &total);
+    for (i = 0; i < total; i++) {
+        struct Conversation *entry = NULL;
+        DoMethod(conversationListObject, MUIM_NList_GetEntry, i, &entry);
+        if (entry == conversation) {
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
 static void finishChatStream(ChatStreamOutcome outcome, UTF8 *receivedMessage,
                              ULONG speechUtf8Index, BOOL isNewConversation,
-                             struct MinList *receivedFiles, BOOL requestStream) {
+                             struct MinList *receivedFiles, BOOL requestStream,
+                             struct Conversation *streamConversation) {
     struct ChatRequestSettings chatSettings;
 
 #ifdef __MORPHOS__
+    /* End live skip; allow Midi-Markdown on the one final paint (raw only
+     * mid-stream ? forced raw here left periodensystem tables unformatted). */
+    morphosChatLiveScintillaUpdates = FALSE;
     morphosChatStreamRawScintillaRefresh = FALSE;
 #endif
+    if (streamConversation == NULL) {
+        streamConversation = currentConversation;
+    }
     if (mainWindowIsShuttingDown()) {
+        chatSendInProgress = FALSE;
+#ifdef __MORPHOS__
+        morphosSchedulePendingConversationSelect();
+#endif
         return;
     }
     if (streamLogIsEnabled()) {
@@ -3586,7 +3690,7 @@ static void finishChatStream(ChatStreamOutcome outcome, UTF8 *receivedMessage,
                 break;
             }
 
-            conversationSyncLastResponseIdFromPayload(currentConversation,
+            conversationSyncLastResponseIdFromPayload(streamConversation,
                                                       toolResponse);
 
             if (hasPendingToolCall()) {
@@ -3653,7 +3757,7 @@ static void finishChatStream(ChatStreamOutcome outcome, UTF8 *receivedMessage,
             chatOutputTextEditorContents);
 #endif
         struct ConversationNode *assistantMessage = addTextToConversation(
-            currentConversation, receivedMessage, "assistant");
+            streamConversation, receivedMessage, "assistant");
         if (assistantMessage != NULL)
             moveChatFiles(&assistantMessage->files, receivedFiles);
         else
@@ -3661,9 +3765,17 @@ static void finishChatStream(ChatStreamOutcome outcome, UTF8 *receivedMessage,
         freeChatFiles(&pendingChatFiles);
         updateAttachmentControls();
         updateResponseFileControl();
-        displayConversation(currentConversation);
 #ifdef __MORPHOS__
-        refreshViewCodeBlocksMenuState();
+        if (conversationRowPending == NULL ||
+            conversationRowPending == streamConversation) {
+            displayConversation(streamConversation);
+            refreshViewCodeBlocksMenuState();
+        } else {
+            streamLogLifecycle(
+                "stream display skipped; pending other conversation");
+        }
+#else
+        displayConversation(streamConversation);
 #endif
 
         if (configGetSpeechEnabled()) {
@@ -3687,17 +3799,38 @@ static void finishChatStream(ChatStreamOutcome outcome, UTF8 *receivedMessage,
 
         if (isNewConversation) {
             struct json_object **responses;
+#ifdef __MORPHOS__
+            if (conversationRowPending != NULL &&
+                conversationRowPending != streamConversation) {
+                /* User already switched away; avoid nested SSL/title work that
+                 * freezes the app after a large stream. */
+                if (streamConversation->name == NULL) {
+                    streamConversation->name = allocNewConversationTitle(
+                        streamConversation, NULL);
+                    if (streamConversation->name != NULL) {
+                        conversationRefreshNameListDisplay(streamConversation);
+                    }
+                }
+                if (!conversationListContains(streamConversation)) {
+                    DoMethod(conversationListObject, MUIM_NList_InsertSingle,
+                             streamConversation, MUIV_NList_Insert_Top);
+                }
+                streamLogLifecycle(
+                    "title gen skipped; pending other conversation");
+                goto morphos_after_title_gen;
+            }
+#endif
 
             updateStatusBar(STRING_GENERATING_CONVERSATION_TITLE, 7);
             showLoadingBar();
-            addTextToConversation(currentConversation,
+            addTextToConversation(streamConversation,
                                   "generate a short title for this "
                                   "conversation and don't enclose the title in "
                                   "quotes or prefix the response with anything",
                                   "user");
-            setConversationSystem(currentConversation, NULL);
+            setConversationSystem(streamConversation, NULL);
             responses = postChatMessageToOpenAI(
-                currentConversation, chatSettings.host, chatSettings.port,
+                streamConversation, chatSettings.host, chatSettings.port,
                 chatSettings.useSSL, chatSettings.model, chatSettings.apiKey,
                 FALSE, chatSettings.useProxy, chatSettings.proxyHost,
                 chatSettings.proxyPort, chatSettings.proxyUsesSSL,
@@ -3706,7 +3839,7 @@ static void finishChatStream(ChatStreamOutcome outcome, UTF8 *receivedMessage,
                 chatSettings.apiEndpoint, chatSettings.apiEndpointUrl,
                 chatSettings.authorizationType, chatSettings.customHeaders);
             struct Node *titleRequestNode =
-                RemTail((struct List *)currentConversation->messages);
+                RemTail((struct List *)streamConversation->messages);
             freeConversationNode(
                 (struct ConversationNode *)titleRequestNode);
             hideLoadingBar();
@@ -3738,20 +3871,37 @@ static void finishChatStream(ChatStreamOutcome outcome, UTF8 *receivedMessage,
                         }
                     }
                 }
-                if (currentConversation->name == NULL) {
-                    currentConversation->name = allocNewConversationTitle(
-                        currentConversation, (const UTF8 *)combined);
-                    if (currentConversation->name != NULL) {
-                        conversationRefreshNameListDisplay(currentConversation);
+                if (streamConversation->name == NULL) {
+                    streamConversation->name = allocNewConversationTitle(
+                        streamConversation, (const UTF8 *)combined);
+                    if (streamConversation->name != NULL) {
+                        conversationRefreshNameListDisplay(streamConversation);
                     }
                 }
                 if (combined != NULL && combined != (STRPTR) "") {
                     FreeVec(combined);
                 }
-                DoMethod(conversationListObject, MUIM_NList_InsertSingle,
-                         currentConversation, MUIV_NList_Insert_Top);
+                if (!conversationListContains(streamConversation)) {
+                    DoMethod(conversationListObject, MUIM_NList_InsertSingle,
+                             streamConversation, MUIV_NList_Insert_Top);
+                }
+#ifdef __MORPHOS__
+                if (conversationRowPending == NULL ||
+                    conversationRowPending == streamConversation) {
+                    DoMethod(conversationListObject, MUIM_NList_SetActive,
+                             MUIV_NList_Active_Top, NULL);
+                    currentConversation = streamConversation;
+                } else {
+                    /* Keep user's NList selection; apply after send. */
+                    currentConversation = streamConversation;
+                    streamLogLifecycle(
+                        "new chat inserted; keep pending list selection");
+                }
+#else
                 DoMethod(conversationListObject, MUIM_NList_SetActive,
                          MUIV_NList_Active_Top, NULL);
+                currentConversation = streamConversation;
+#endif
                 ri = 0;
                 r = NULL;
                 while ((r = responses[ri++]) != NULL) {
@@ -3760,6 +3910,9 @@ static void finishChatStream(ChatStreamOutcome outcome, UTF8 *receivedMessage,
             }
             FreeVec(responses);
         }
+#ifdef __MORPHOS__
+    morphos_after_title_gen:;
+#endif
     }
 
     if (outcome == CHAT_STREAM_PARTIAL) {
@@ -3779,6 +3932,10 @@ static void finishChatStream(ChatStreamOutcome outcome, UTF8 *receivedMessage,
     set(sendMessageButton, MUIA_Disabled, FALSE);
     set(newChatButton, MUIA_Disabled, FALSE);
     set(deleteChatButton, MUIA_Disabled, FALSE);
+    chatSendInProgress = FALSE;
+#ifdef __MORPHOS__
+    morphosSchedulePendingConversationSelect();
+#endif
 }
 
 static void sendChatMessage() {
@@ -3789,6 +3946,7 @@ static void sendChatMessage() {
     struct ConversationNode *userMessage = NULL;
 
     streamLogLifecycle("sendChatMessage begin");
+    chatSendInProgress = TRUE;
     if (currentConversation == NULL) {
         isNewConversation = TRUE;
         currentConversation = newConversation();
@@ -3834,6 +3992,10 @@ static void sendChatMessage() {
         }
         if (freeExportedText)
             FreeVec(text);
+        chatSendInProgress = FALSE;
+#ifdef __MORPHOS__
+        morphosSchedulePendingConversationSelect();
+#endif
         return;
     }
 
@@ -3912,12 +4074,12 @@ static void sendChatMessage() {
         FreeVec(receivedMessage);
         if (freeExportedText)
             FreeVec(text);
+        chatSendInProgress = FALSE;
+#ifdef __MORPHOS__
+        morphosSchedulePendingConversationSelect();
+#endif
         return;
     }
-
-#ifdef __MORPHOS__
-    displayConversation(currentConversation);
-#endif
 
     struct ChatRequestSettings chatSettings;
     configGetActiveChatRequestSettings(&chatSettings);
@@ -3953,15 +4115,19 @@ static void sendChatMessage() {
     UWORD wordNumber = 0;
     struct UTF8StreamBuffer *utf8Stream = utf8stream_create(4096);
 
-    strbufAppend(chatOutputTextEditorContents,
-                 CHAT_OUTPUT_TEXT_EDITOR_CONTENTS_LENGTH, "\n");
     streamUiResetRefreshClock();
 #ifdef __MORPHOS__
+    /* Arm live-skip before any buffer rebuild so a deferred Scintilla refresh
+     * cannot docswap+APPENDTEXT while SSE is about to start (OS freeze). */
     morphosChatStreamRawScintillaRefresh = TRUE;
+    morphosChatLiveScintillaUpdates = TRUE;
+    displayConversation(currentConversation);
 #endif
 
+    strbufAppend(chatOutputTextEditorContents,
+                 CHAT_OUTPUT_TEXT_EDITOR_CONTENTS_LENGTH, "\n");
+
     do {
-        streamLogLifecycle("chat send postChat begin");
         responses = postChatMessageToOpenAI(
             currentConversation, chatSettings.host, chatSettings.port,
             chatSettings.useSSL, chatSettings.model, chatSettings.apiKey,
@@ -4007,11 +4173,15 @@ static void sendChatMessage() {
                 FreeVec(text);
 #ifdef __MORPHOS__
             morphosChatStreamRawScintillaRefresh = FALSE;
+            morphosChatLiveScintillaUpdates = FALSE;
+#endif
+            chatSendInProgress = FALSE;
+#ifdef __MORPHOS__
+            morphosSchedulePendingConversationSelect();
 #endif
             return;
         }
 
-        streamLogLifecycle("chat send postChat returned batch");
 
         UWORD responseIndex = 0;
         struct json_object *response;
@@ -4077,6 +4247,11 @@ static void sendChatMessage() {
                     FreeVec(text);
 #ifdef __MORPHOS__
                 morphosChatStreamRawScintillaRefresh = FALSE;
+                morphosChatLiveScintillaUpdates = FALSE;
+#endif
+                chatSendInProgress = FALSE;
+#ifdef __MORPHOS__
+                morphosSchedulePendingConversationSelect();
 #endif
                 return;
             }
@@ -4194,9 +4369,13 @@ static void sendChatMessage() {
         streamUiFlushChatDisplay();
         finishChatStream(chatStreamClassifyOutcome(receivedMessage),
                          receivedMessage, speechUtf8Index, isNewConversation,
-                         &receivedFiles, requestStream);
+                         &receivedFiles, requestStream, currentConversation);
     } else {
         freeChatFiles(&receivedFiles);
+        chatSendInProgress = FALSE;
+#ifdef __MORPHOS__
+        morphosSchedulePendingConversationSelect();
+#endif
     }
 
     streamLogLifecycle("sendChatMessage end");

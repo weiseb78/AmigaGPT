@@ -81,6 +81,9 @@ void chatOutputScintillaCancelPendingCodeblockOpen(void);
 /** Free pending deferred role-style apply (shutdown / before new SetUtf8). */
 void chatOutputScintillaCancelDeferredStyles(void);
 
+/** Clear stuck replace-busy / deferred styles (Markdown toggle, recovery). */
+void chatOutputScintillaResetPaintGuards(void);
+
 /** Stop SCN traffic and pending editor work before MUI tears down chat Scintilla. */
 void chatOutputScintillaQuiesceForShutdown(Object *sci);
 

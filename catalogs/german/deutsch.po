@@ -2031,8 +2031,7 @@ msgstr "clipboard.library konnte nicht geöffnet werden."
 msgctxt "STRING_ERROR_CLIPBOARD_COPY (381//)"
 msgid "Could not copy the active code block to the clipboard."
 msgstr ""
-"Der aktive Codeblock konnte nicht in die Zwischenablage kopiert "
-"werden."
+"Der aktive Codeblock konnte nicht in die Zwischenablage kopiert werden."
 
 #: src/menu.c
 msgctxt "STRING_MENU_COPY_CODEBLOCK (382//)"
@@ -2130,8 +2129,8 @@ msgid ""
 "Could not open ttengine.library. Install TTEngine (FreeType fonts) for "
 "Scintilla UTF-8 display."
 msgstr ""
-"ttengine.library konnte nicht geöffnet werden. Installieren Sie "
-"TTEngine (FreeType-Schriften) für die Scintilla-UTF-8-Anzeige."
+"ttengine.library konnte nicht geöffnet werden. Installieren Sie TTEngine "
+"(FreeType-Schriften) für die Scintilla-UTF-8-Anzeige."
 
 #: src/speech.c
 msgctxt "STRING_ERROR_SPEECH_NOT_INITIALIZED (402//)"
@@ -2266,6 +2265,11 @@ msgstr "SSL: Handshake-Timeout"
 msgctxt "STRING_ERROR_SSL_WANT_READ_TIMEOUT (427//)"
 msgid "SSL: timeout waiting for stream data (WANT_READ)"
 msgstr "SSL: Timeout beim Warten auf Stream-Daten (WANT_READ)"
+
+#: src/openai.c
+msgctxt "STRING_WAITING_FOR_MORE_DATA (428//)"
+msgid "Waiting for more response data..."
+msgstr "Warte auf weitere Antwortdaten..."
 
 #~ msgctxt "STRING_CLEAR_ATTACHMENTS (366//)"
 #~ msgid "Clear"

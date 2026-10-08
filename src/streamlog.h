@@ -5,14 +5,25 @@
 
 #define STREAMLOG_SSE_SNIPPET_MAX 200
 
-/** MorphOS RAM disk (debug stream only). */
+/*
+ * MorphOS: Work:Tmp survives hard reset (T: is RAM and gone after reboot).
+ * Other targets keep T: for lightweight debug dumps.
+ */
+#ifdef __MORPHOS__
+#define STREAMLOG_STREAM_PATH "Work:Tmp/amigagpt_stream.log"
+#define STREAMLOG_UTF8_PATH "Work:Tmp/amigagpt_utf8.log"
+#define STREAMLOG_LIFECYCLE_PATH "AMIGAGPT:amigagpt_lifecycle.log"
+#define STREAMLOG_LIFECYCLE_MIRROR_PATH "Work:Tmp/amigagpt_lifecycle.log"
+#define STREAMLOG_SHUTDOWN_LAST_PATH "Work:Tmp/amigagpt_shutdown.last"
+#define STREAMLOG_STARTUP_LAST_PATH "Work:Tmp/amigagpt_startup.last"
+#else
 #define STREAMLOG_STREAM_PATH "T:amigagpt_stream.log"
-#define STREAMLOG_UTF8_PATH   "T:amigagpt_utf8.log"
-/** Persistent lifecycle trace (config.debugLifecycleLog); T: mirror + LogTool. */
+#define STREAMLOG_UTF8_PATH "T:amigagpt_utf8.log"
 #define STREAMLOG_LIFECYCLE_PATH "AMIGAGPT:amigagpt_lifecycle.log"
 #define STREAMLOG_LIFECYCLE_MIRROR_PATH "T:amigagpt_lifecycle.log"
 #define STREAMLOG_SHUTDOWN_LAST_PATH "T:amigagpt_shutdown.last"
 #define STREAMLOG_STARTUP_LAST_PATH "T:amigagpt_startup.last"
+#endif
 
 void streamLogSyncFromConfig(void);
 
@@ -36,10 +47,10 @@ void streamLogBootPhase(CONST_STRPTR phase);
 /** Lifecycle trace when config.debugLifecycleLog is on (startup/shutdown races). */
 void streamLogLifecycle(CONST_STRPTR phase);
 
-/** MorphOS: overwrite T:amigagpt_shutdown.last with last shutdown phase (always on). */
+/** MorphOS: overwrite amigagpt_shutdown.last with last shutdown phase (always on). */
 void streamLogShutdownPhase(CONST_STRPTR phase);
 
-/** MorphOS: overwrite T:amigagpt_startup.last with last startup phase (always on). */
+/** MorphOS: overwrite amigagpt_startup.last with last startup phase (always on). */
 void streamLogStartupPhase(CONST_STRPTR phase);
 
 #endif
