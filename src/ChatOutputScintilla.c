@@ -2799,8 +2799,12 @@ static BOOL chatOutputAppendPreserveViewport;
 static sptr_t chatOutputAppendFirstVisible;
 static sptr_t chatOutputAppendOldLineCount;
 static BOOL chatOutputAppendSkipViewport;
+/* Bumped on cancel so a stale PushMethod Continue cannot touch a newer paint. */
+static ULONG chatOutputAppendRunId;
+static ULONG chatOutputAppendContinueRunId;
 
 static void chatOutputScintillaCancelDeferredAppend(void) {
+    chatOutputAppendRunId++;
     if (chatOutputAppendUtf8 != NULL) {
         FreeVec(chatOutputAppendUtf8);
         chatOutputAppendUtf8 = NULL;
@@ -2906,9 +2910,15 @@ HOOKPROTONHNONP(ChatOutputSciAppendContinueFunc, void) {
     Object *sci = chatOutputAppendSci;
     ULONG batch = 0;
 
-    if (mainWindowIsShuttingDown() || sci == NULL || chatOutputAppendUtf8 == NULL) {
+    if (mainWindowIsShuttingDown()) {
         chatOutputScintillaCancelDeferredAppend();
         chatOutputScintillaReplaceBusy = FALSE;
+        return;
+    }
+    /* Stale Continue after paint abort/reentry: do not clear ReplaceBusy. */
+    if (chatOutputAppendContinueRunId != chatOutputAppendRunId || sci == NULL ||
+        chatOutputAppendUtf8 == NULL) {
+        streamLogLifecycle("chat scintilla replace append continue stale");
         return;
     }
 
@@ -2928,9 +2938,15 @@ HOOKPROTONHNONP(ChatOutputSciAppendContinueFunc, void) {
         (void)DoMethod(app, MUIM_Application_CheckRefresh);
     }
 
+    if (chatOutputAppendContinueRunId != chatOutputAppendRunId) {
+        streamLogLifecycle("chat scintilla replace append continue aborted");
+        return;
+    }
+
     if (chatOutputAppendOff < chatOutputAppendLen) {
         streamLogLifecycle("chat scintilla replace append continue");
         if (app != NULL) {
+            chatOutputAppendContinueRunId = chatOutputAppendRunId;
             DoMethod(app, MUIM_Application_PushMethod, app, 2, MUIM_CallHook,
                      &ChatOutputSciAppendContinueHook);
         } else {
@@ -2983,8 +2999,19 @@ void chatOutputScintillaSetUtf8TextWithRoleStyles(Object *sci, const char *utf8,
         return;
     }
     if (chatOutputScintillaReplaceBusy) {
-        streamLogLifecycle("chat scintilla replace reentry skipped");
-        return;
+        if (chatOutputAppendUtf8 != NULL) {
+            /* Deferred paint only ? abort drawing, keep conversation data.
+             * Apply this SetUtf8 (e.g. user switched chats mid-paint). */
+            streamLogLifecycle(
+                "chat scintilla replace reentry abort prior paint");
+            chatOutputScintillaCancelDeferredAppend();
+            chatOutputScintillaCancelDeferredStyles();
+            chatOutputScintillaReplaceBusy = FALSE;
+        } else {
+            /* Sync replace still on the stack ? cannot nest. */
+            streamLogLifecycle("chat scintilla replace reentry skipped");
+            return;
+        }
     }
     chatOutputScintillaEnsureViewerReady(sci);
     if (utf8 == NULL) {
@@ -3075,6 +3102,7 @@ void chatOutputScintillaSetUtf8TextWithRoleStyles(Object *sci, const char *utf8,
     chatOutputAppendFirstVisible = firstVisibleLine;
     chatOutputAppendOldLineCount = oldLineCount;
     chatOutputAppendSkipViewport = chatOutputScintillaMorphosSkipViewport;
+    chatOutputAppendContinueRunId = chatOutputAppendRunId;
     streamLogLifecycle("chat scintilla replace append deferred");
     DoMethod(app, MUIM_Application_PushMethod, app, 2, MUIM_CallHook,
              &ChatOutputSciAppendContinueHook);
