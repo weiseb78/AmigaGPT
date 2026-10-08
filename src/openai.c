@@ -5700,7 +5700,7 @@ struct json_object **postChatMessageToOpenAI(
                         json_object_object_add(errObj, "error", errInner);
                         responses[responseIndex++] = errObj;
                     }
-                    streamingInProgress = FALSE;
+                    chatStreamInProgress = FALSE;
                     closeActiveResponseConnection();
                     doneReading = TRUE;
                     break;
