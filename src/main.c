@@ -1,4 +1,5 @@
 #include <dos/dos.h>
+#include <dos/dosextens.h>
 #ifdef __AMIGAOS4__
 #include <libraries/application.h>
 #include <proto/application.h>
@@ -57,6 +58,41 @@ struct WBStartup *wbStartupMessage = NULL;
 
 static void cleanExit();
 
+#if defined(__AMIGAOS3__) || defined(__MORPHOS__)
+/**
+ * Ambient (and some Workbench launches) can leave pr_CurrentDir empty.
+ * A later relative Lock/Open, or MUI looking up an icon or .mcc in the
+ * current directory, is then treated as volume "." and DOS asks the
+ * user to insert it. Point the current directory at the program drawer
+ * before anything else runs.
+ */
+static void ensureCurrentDir(int argc, char **argv) {
+    struct Process *proc = (struct Process *)FindTask(NULL);
+    BPTR lock = 0;
+
+    if (proc == NULL || proc->pr_CurrentDir != 0)
+        return;
+
+    if (argc == 0 && argv != NULL) {
+        struct WBStartup *wb = (struct WBStartup *)argv;
+        if (wb != NULL && wb->sm_NumArgs > 0 && wb->sm_ArgList != NULL)
+            lock = DupLock(wb->sm_ArgList[0].wa_Lock);
+    }
+
+    if (lock == 0) {
+        BPTR progDir = GetProgramDir();
+        if (progDir != 0)
+            lock = DupLock(progDir);
+    }
+
+    if (lock == 0)
+        lock = Lock("PROGDIR:", ACCESS_READ);
+
+    if (lock != 0)
+        CurrentDir(lock);
+}
+#endif
+
 /**
  * App entry point
  * @return RETURN_OK on success, RETURN_ERROR on failure
@@ -75,19 +111,9 @@ LONG main(int argc, char **argv) {
 #endif
 
 #if defined(__AMIGAOS3__) || defined(__MORPHOS__)
-    struct Process *currentTask = (struct Process *)FindTask(NULL);
-    struct CommandLineInterface *cli =
-        (struct CommandLineInterface *)BADDR(currentTask->pr_CLI);
-
-    if (cli == NULL) {
-        wbStartupMessage = (struct WBStartup *)GetMsg(&currentTask->pr_MsgPort);
-        if (wbStartupMessage != NULL) {
-            ReplyMsg((struct Message *)wbStartupMessage);
-            wbStartupMessage = NULL;
-        }
-    }
-
+    ensureCurrentDir(argc, argv);
 #endif
+
 #ifdef __AMIGAOS3__
     struct Process *currentTask = (struct Process *)FindTask(NULL);
     UBYTE *upper = (UBYTE *)currentTask->pr_Task.tc_SPUpper;
@@ -106,10 +132,6 @@ LONG main(int argc, char **argv) {
     if (argc == 0) {
         wbStartupMessage = (struct WBStartup *)argv;
     }
-
-    char fileName[256];
-    NameFromLock(GetProgramDir(), fileName, sizeof(fileName));
-    AddPart(fileName, argv[0], sizeof(fileName));
 
     appID = RegisterApplication(
         NULL, REGAPP_UniqueApplication, TRUE, REGAPP_URLIdentifier,

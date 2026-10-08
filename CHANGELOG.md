@@ -1,5 +1,37 @@
 # Changelog
 
+## 3.4.0 (2026-10-08)
+
+- Speech tab for generating reusable spoken phrases as WAV files, with phrase history, an interactive waveform with play/pause, stop and rewind symbols, speech profile details, Regenerate, Save Speech Copy, file attachments and Generate text with AI
+- ARexx SPEAKTEXT now saves WAV (default) or raw PCM for every speech backend, including narrator.device and flite.device, when OUTPUT is given
+- LISTAUDIOFORMATS now reports wav and pcm
+- Main window tabs renamed to Chat, Image and Speech
+- Send, Create and Generate change to Stop while a request is in progress, and abort that request. After a Chat reply is being read aloud, Send stays on Stop and interrupts playback
+- Expert mode in the installer  now asks whether to install AmigaGPTD, including on AmiKit, instead of always copying the daemon
+- On AmiKit the installer writes the AMIGAGPT: assign and optional daemon start to KIT-Startup instead of S:User-Startup
+- Extracted the Return-to-submit editor and speech waveform into public MUI classes ActionTextEditor.mcc and AudioPlayer.mcc. The installer copies them into MUI:Libs/MUI (or SYS:Classes/MUI on MorphOS)
+- Fix MorphOS asking to insert volume "." at launch when Ambient left the current directory unset and MUI searched there for an icon or .mcc
+- Fix MorphOS chat hanging on "Connecting..." after a successful profile test
+- Fix file uploads through Cloudflare (AmiKit) failing with a connect error because Report-To header JSON was parsed instead of the Files API body
+
+## 3.3.0 (2026-08-29)
+
+- Rename the xAI provider to SpaceXAI throughout the chat, image and speech provider settings; existing configs and ARexx scripts using the old name keep working
+- New default chat models: gpt-5.6-terra (OpenAI), gemini-flash-latest (Google Gemini), claude-sonnet-5 (Anthropic Claude) and grok-4.5 (SpaceXAI Grok)
+- New default image models: gpt-image-2 (OpenAI), gemini-3-pro-image (Google Gemini) and grok-imagine-image-2.0 (SpaceXAI Grok)
+- Fetched models now filter out non-relevant models
+- Code Interpreter is now enabled by default for all built-in chat providers
+- Model and voice lists are now sorted alphabetically, both for the prepopulated lists shown on first launch and for lists refreshed with the Fetch button
+- Fix the busy bar at the bottom of the main window animating forever after generating an image, and keep it running for the whole request instead of blanking out as soon as the request was sent
+- Attach reference images to an image generation prompt so the model can edit, restyle or combine pictures you already have
+- Edit button on a generated image starts a fresh prompt with that picture already attached as a reference
+- ARexx CREATEIMAGE supports A=ATTACH to send one or more reference images with the prompt
+- Fix every second chat message failing with providers that do not retain responses (SpaceXAI Grok), which made ARexx SENDMESSAGE and the AskGPT script only work every second time
+- Fix ARexx SENDMESSAGE returning an empty RESULT instead of the error text when the provider reports errors as a plain string rather than an object
+- Improved memory management for AmigaGPTTextEditor
+- AmigaGPTTextEditor no longer crashes in MUI 3.8 on app exit
+- AmigaGPTTextEditor now enabled for MUI 3.8. (Can now push enter to send message / shift + enter to create new line)
+
 ## 3.2.1 (2026-08-26)
 
 - Fix follow-up chat failing with "No tool output found for function call" after the model used the shell tool (ARexx/KIT and the GUI)

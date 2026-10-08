@@ -215,7 +215,11 @@ static Object *getActiveTextEditor() {
     }
 
     get(modeRegisterGroup, MUIA_Group_ActivePage, &activePage);
-    return (activePage == 0) ? chatInputTextEditor : imageInputTextEditor;
+    if (activePage == 0)
+        return chatInputTextEditor;
+    if (activePage == 1)
+        return imageInputTextEditor;
+    return speechInputTextEditor;
 }
 
 /**
@@ -268,7 +272,8 @@ void updateEditMenuItemsEnabled() {
     }
 
     focusedInputTextEditor = (activeObject == chatInputTextEditor ||
-                              activeObject == imageInputTextEditor)
+                              activeObject == imageInputTextEditor ||
+                              activeObject == speechInputTextEditor)
                                  ? activeObject
                                  : NULL;
     applyEditMenuItemsEnabled();
@@ -1181,7 +1186,7 @@ static void populateArexxMenu() {
 
     // Scan the rexx directory for .rexx files
 #if defined(__AMIGAOS3__) || defined(__MORPHOS__)
-    BPTR lock = Lock("AMIGAGPT:rexx", ACCESS_READ);
+    BPTR lock = Lock("AMIGAGPT:rexx", SHARED_LOCK);
     if (lock != 0) {
         struct FileInfoBlock *fib = AllocDosObject(DOS_FIB, NULL);
         if (fib != NULL) {
@@ -1297,7 +1302,7 @@ static BPTR BuildNPPath(const char *const *extraDirs, BOOL addParent) {
     for (size_t i = 0; i < extraCount; ++i) {
         if (!extraDirs[i] || !extraDirs[i][0])
             continue;
-        BPTR lock = Lock((STRPTR)extraDirs[i], ACCESS_READ);
+        BPTR lock = Lock((STRPTR)extraDirs[i], SHARED_LOCK);
         if (!lock)
             continue;
 

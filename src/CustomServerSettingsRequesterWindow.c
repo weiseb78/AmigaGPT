@@ -155,7 +155,7 @@ static BOOL suppressProfileSelected = FALSE;
 
 /* Stable (non-localized) locked profile names for persistence/matching */
 static const CONST_STRPTR LOCKED_PROFILE_NAMES[LOCKED_CHAT_PROFILE_COUNT] = {
-    "OpenAI", "Google Gemini", "xAI Grok", "Anthropic Claude"};
+    "OpenAI", "Google Gemini", "SpaceXAI Grok", "Anthropic Claude"};
 
 static CONST_STRPTR getLockedProfileName(LONG lockedIndex) {
     if (lockedIndex < 0 || lockedIndex >= LOCKED_CHAT_PROFILE_COUNT)
@@ -1753,15 +1753,13 @@ HOOKPROTONHNONP(CustomModelSelectedFunc, void) {
     LONG active = MUIV_NList_Active_Off;
     get(customServerModelList, MUIA_NList_Active, &active);
 
-    if (active != MUIV_NList_Active_Off && customServerModelsJson != NULL &&
-        json_object_is_type(customServerModelsJson, json_type_array)) {
-        struct json_object *modelIdObj =
-            json_object_array_get_idx(customServerModelsJson, active);
-        if (modelIdObj != NULL) {
-            CONST_STRPTR modelId = json_object_get_string(modelIdObj);
-            if (modelId != NULL) {
-                set(customServerChatModelString, MUIA_String_Contents, modelId);
-            }
+    if (active != MUIV_NList_Active_Off) {
+        /* Read the entry back from the list rather than indexing the JSON
+         * array, which the list order no longer has to match. */
+        STRPTR modelId = NULL;
+        DoMethod(customServerModelList, MUIM_NList_GetEntry, active, &modelId);
+        if (modelId != NULL) {
+            set(customServerChatModelString, MUIA_String_Contents, modelId);
         }
     }
 }
@@ -1809,6 +1807,28 @@ HOOKPROTONHNONP(FetchCustomModelsFunc, void) {
                       endpointUrl, authorizationType, customHeaders);
 
     if (customServerModelsJson != NULL) {
+        LONG activeProfile = MUIV_NList_Active_Off;
+        get(customServerProfileList, MUIA_NList_Active, &activeProfile);
+
+        if (settingsIsImageMode) {
+            /* Built-in image providers expose mixed-purpose model lists.
+             * Custom OpenAI-compatible image profiles stay unfiltered because
+             * local multimodal model IDs do not necessarily contain "image".
+             */
+            if (isLockedProfileListIndex(activeProfile))
+                filterModelNames(customServerModelsJson,
+                                 MODEL_LIST_FILTER_IMAGE);
+        } else {
+            ModelListFilter filter = MODEL_LIST_FILTER_CHAT;
+            if (isLockedProfileListIndex(activeProfile)) {
+                if (activeProfile == LOCKED_PROFILE_OPENAI)
+                    filter = MODEL_LIST_FILTER_OPENAI_CHAT;
+                else if (activeProfile == LOCKED_PROFILE_GEMINI)
+                    filter = MODEL_LIST_FILTER_GEMINI_CHAT;
+            }
+            filterModelNames(customServerModelsJson, filter);
+        }
+
         populateModelList();
         updateStatusBar(STRING_READY, greenPen);
     } else {
@@ -1832,10 +1852,14 @@ static void populateModelList(void) {
         return;
     }
 
+    /* Show the prepopulated and fetched lists in the same alphabetical order */
+    sortJsonArrayAlphabetically(customServerModelsJson, NULL);
+
     LONG modelCount = json_object_array_length(customServerModelsJson);
     STRPTR currentModel = NULL;
     get(customServerChatModelString, MUIA_String_Contents, &currentModel);
     LONG selectedIndex = MUIV_NList_Active_Off;
+    LONG insertedCount = 0;
 
     for (LONG i = 0; i < modelCount; i++) {
         struct json_object *modelIdObj =
@@ -1848,8 +1872,9 @@ static void populateModelList(void) {
 
             /* Check if this is the currently selected model */
             if (currentModel != NULL && strcmp(modelId, currentModel) == 0) {
-                selectedIndex = i;
+                selectedIndex = insertedCount;
             }
+            insertedCount++;
         }
     }
 
@@ -2418,7 +2443,7 @@ HOOKPROTONHNONP(CustomServerSettingsRequesterTestButtonClickedFunc, void) {
         (CONST_STRPTR)apiEndpointUrl, authType, (CONST_STRPTR)customHeaders,
         (CONST_STRPTR)modelName, imageSize, apiKeyToUse, useProxy, proxyHost,
         proxyPort, proxyUsesSSL, proxyRequiresAuth, proxyUsername,
-        proxyPassword, imageFormat, imageEndpoint);
+        proxyPassword, imageFormat, imageEndpoint, NULL);
 
     if (resp == NULL) {
         updateStatusBar(STRING_ERROR, redPen);

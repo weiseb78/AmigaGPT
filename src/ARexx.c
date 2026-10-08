@@ -258,17 +258,20 @@ static BOOL rexxPathIsReadableFile(CONST_STRPTR path) {
     return TRUE;
 }
 
-static void rexxSetAttachmentError(CONST_STRPTR path) {
+static void rexxSetAttachmentErrorFor(CONST_STRPTR message,
+                                      CONST_STRPTR path) {
     UBYTE errMsg[512];
     if (path != NULL && path[0] != '\0') {
-        snprintf(errMsg, sizeof(errMsg), "%s: %s",
-                 STRING_ERROR_ATTACHMENT_FILE_NOT_FOUND, path);
+        snprintf(errMsg, sizeof(errMsg), "%s: %s", message, path);
     } else {
-        snprintf(errMsg, sizeof(errMsg), "%s",
-                 STRING_ERROR_ATTACHMENT_FILE_NOT_FOUND);
+        snprintf(errMsg, sizeof(errMsg), "%s", message);
     }
     set(app, MUIA_Application_RexxString, errMsg);
     updateStatusBar(STRING_ERROR, redPen);
+}
+
+static void rexxSetAttachmentError(CONST_STRPTR path) {
+    rexxSetAttachmentErrorFor(STRING_ERROR_ATTACHMENT_FILE_NOT_FOUND, path);
 }
 
 static ULONG rexxCountAttachPaths(CONST_STRPTR attachSpec) {
@@ -297,16 +300,18 @@ static ULONG rexxCountAttachPaths(CONST_STRPTR attachSpec) {
 }
 
 /**
- * Attach comma-separated file paths to a conversation message.
- * An empty specification is success. On failure the ARexx error string is set.
+ * Attach comma-separated file paths to a chat-file list. An empty
+ * specification is success. Set imagesOnly for the reference images of an image
+ * request, which can only carry pictures. On failure the ARexx error string is
+ * set.
  **/
-static BOOL rexxAttachPathsToMessage(struct ConversationNode *message,
-                                     CONST_STRPTR attachSpec) {
+static BOOL rexxAttachPathsToList(struct MinList *files,
+                                  CONST_STRPTR attachSpec, BOOL imagesOnly) {
     STRPTR specCopy;
     STRPTR cursor;
     if (attachSpec == NULL || attachSpec[0] == '\0')
         return TRUE;
-    if (message == NULL)
+    if (files == NULL)
         return FALSE;
 
     specCopy = AllocVec(strlen(attachSpec) + 1, MEMF_ANY | MEMF_CLEAR);
@@ -358,7 +363,16 @@ static BOOL rexxAttachPathsToMessage(struct ConversationNode *message,
             CSA_SourceCodeset, (Tag)systemCodeset, CSA_Source, (Tag)name,
             CSA_MapForeignChars, TRUE, TAG_DONE);
         detectedMime = detectMimeTypeFromContents(path);
-        if (!addChatFile(&message->files, path,
+        if (imagesOnly && !attachmentLooksLikeImage(path, detectedMime)) {
+            if (detectedMime != NULL)
+                FreeVec(detectedMime);
+            if (nameUTF8 != NULL)
+                CodesetsFreeA(nameUTF8, NULL);
+            FreeVec(specCopy);
+            rexxSetAttachmentErrorFor(STRING_ERROR_NOT_AN_IMAGE, path);
+            return FALSE;
+        }
+        if (!addChatFile(files, path,
                          nameUTF8 != NULL ? nameUTF8 : (UTF8 *)name,
                          detectedMime, NULL, NULL, NULL)) {
             if (detectedMime != NULL)
@@ -406,7 +420,7 @@ static BOOL rexxEnsureDrawer(CONST_STRPTR drawer) {
     BPTR lock;
     if (drawer == NULL || drawer[0] == '\0')
         return FALSE;
-    lock = Lock(drawer, ACCESS_READ);
+    lock = Lock(drawer, SHARED_LOCK);
     if (lock != 0) {
         UnLock(lock);
         return TRUE;
@@ -554,7 +568,7 @@ static void rexxFinishSendMessage(
 
 #define REXX_LOCKED_PROFILE_NAME_OPENAI "OpenAI"
 #define REXX_LOCKED_PROFILE_NAME_GEMINI "Google Gemini"
-#define REXX_LOCKED_PROFILE_NAME_GROK "xAI Grok"
+#define REXX_LOCKED_PROFILE_NAME_GROK "SpaceXAI Grok"
 #define REXX_LOCKED_PROFILE_NAME_ANTHROPIC "Anthropic Claude"
 #define REXX_DEFAULT_NARRATOR_RATE 150
 #define REXX_DEFAULT_NARRATOR_PITCH 110
@@ -674,7 +688,8 @@ static CONST_STRPTR rexxResolveChatProfileAlias(CONST_STRPTR name) {
         return REXX_LOCKED_PROFILE_NAME_GEMINI;
     }
     if (strcasecmp(name, REXX_LOCKED_PROFILE_NAME_GROK) == 0 ||
-        strcasecmp(name, "xAI") == 0 || strcasecmp(name, "Grok") == 0) {
+        strcasecmp(name, "SpaceXAI") == 0 || strcasecmp(name, "xAI") == 0 ||
+        strcasecmp(name, "xAI Grok") == 0 || strcasecmp(name, "Grok") == 0) {
         return REXX_LOCKED_PROFILE_NAME_GROK;
     }
     if (strcasecmp(name, REXX_LOCKED_PROFILE_NAME_ANTHROPIC) == 0 ||
@@ -697,7 +712,8 @@ static CONST_STRPTR rexxResolveImageProfileAlias(CONST_STRPTR name) {
         return REXX_LOCKED_PROFILE_NAME_GEMINI;
     }
     if (strcasecmp(name, REXX_LOCKED_PROFILE_NAME_GROK) == 0 ||
-        strcasecmp(name, "xAI") == 0 || strcasecmp(name, "Grok") == 0) {
+        strcasecmp(name, "SpaceXAI") == 0 || strcasecmp(name, "xAI") == 0 ||
+        strcasecmp(name, "xAI Grok") == 0 || strcasecmp(name, "Grok") == 0) {
         return REXX_LOCKED_PROFILE_NAME_GROK;
     }
     return NULL;
@@ -1427,6 +1443,31 @@ rexxResolveSpeechProfileSettings(CONST_STRPTR profileName,
     return TRUE;
 }
 
+/**
+ * Reply to the ARexx caller with the API error carried by a response payload.
+ * Providers disagree on the shape - OpenAI nests the text in error.message
+ * while xAI answers with a plain "error" string - so the shared extractor is
+ * used, with the generic connection error as a fallback. Replying with an
+ * empty string would leave RESULT unset in the calling script, which looks
+ * like the command silently did nothing.
+ **/
+static void rexxSetApiErrorReply(struct json_object *response) {
+    UTF8 *messageString = getApiErrorMessageFromJson(response);
+    STRPTR formatted = NULL;
+    if (messageString != NULL && strlen(messageString) > 0) {
+        formatted = CodesetsUTF8ToStr(CSA_DestCodeset, (Tag)systemCodeset,
+                                      CSA_Source, (Tag)messageString,
+                                      CSA_MapForeignChars, TRUE, TAG_DONE);
+    }
+    set(app, MUIA_Application_RexxString,
+        (formatted != NULL && formatted[0] != '\0')
+            ? formatted
+            : (STRPTR)STRING_ERROR_CONNECTING_OPENAI);
+    if (formatted != NULL)
+        CodesetsFreeA(formatted, NULL);
+    updateStatusBar(STRING_ERROR, redPen);
+}
+
 static void rexxSetProfileNotFoundError(CONST_STRPTR kind,
                                         CONST_STRPTR profileName) {
     UBYTE errMsg[512];
@@ -1584,7 +1625,7 @@ HOOKPROTONHNO(SendMessageFunc, APTR, ULONG *arg) {
         updateStatusBar(STRING_ERROR, redPen);
         return RETURN_OK;
     }
-    if (!rexxAttachPathsToMessage(userMessage, attachSpec)) {
+    if (!rexxAttachPathsToList(&userMessage->files, attachSpec, FALSE)) {
         RemTail((struct List *)conversation->messages);
         freeConversationNode(userMessage);
         return RETURN_OK;
@@ -1817,18 +1858,9 @@ HOOKPROTONHNO(SendMessageFunc, APTR, ULONG *arg) {
         if (json_object_object_get_ex(toolResponse, "error", &error) &&
             !json_object_is_type(error, json_type_null)) {
             clearPendingToolCall();
-            struct json_object *message =
-                json_object_object_get(error, "message");
-            UTF8 *messageString = json_object_get_string(message);
-            STRPTR formattedMessageSystemEncoded = CodesetsUTF8ToStr(
-                CSA_DestCodeset, (Tag)systemCodeset, CSA_Source,
-                (Tag)messageString, CSA_MapForeignChars, TRUE, TAG_DONE);
-            set(app, MUIA_Application_RexxString,
-                formattedMessageSystemEncoded);
-            CodesetsFreeA(formattedMessageSystemEncoded, NULL);
+            rexxSetApiErrorReply(toolResponse);
             json_object_put(toolResponse);
             freeChatFiles(&receivedFiles);
-            updateStatusBar(STRING_ERROR, redPen);
             return RETURN_OK;
         }
 
@@ -1917,15 +1949,7 @@ HOOKPROTONHNO(SendMessageFunc, APTR, ULONG *arg) {
         struct json_object *error;
         if (json_object_object_get_ex(response, "error", &error) &&
             !json_object_is_type(error, json_type_null)) {
-            struct json_object *message =
-                json_object_object_get(error, "message");
-            UTF8 *messageString = json_object_get_string(message);
-            STRPTR formattedMessageSystemEncoded = CodesetsUTF8ToStr(
-                CSA_DestCodeset, (Tag)systemCodeset, CSA_Source,
-                (Tag)messageString, CSA_MapForeignChars, TRUE, TAG_DONE);
-            set(app, MUIA_Application_RexxString,
-                formattedMessageSystemEncoded);
-            CodesetsFreeA(formattedMessageSystemEncoded, NULL);
+            rexxSetApiErrorReply(response);
             /* Cleanup */
             ri = 0;
             while ((response = responses[ri++]) != NULL) {
@@ -1933,7 +1957,6 @@ HOOKPROTONHNO(SendMessageFunc, APTR, ULONG *arg) {
             }
             FreeVec(responses);
             freeChatFiles(&receivedFiles);
-            updateStatusBar(STRING_ERROR, redPen);
             return RETURN_OK;
         }
         UTF8 *part =
@@ -2013,8 +2036,13 @@ HOOKPROTONHNO(CreateImageFunc, APTR, ULONG *arg) {
     STRPTR modelString = (STRPTR)arg[1];
     STRPTR sizeString = (STRPTR)arg[2];
     STRPTR apiKey = (STRPTR)arg[3];
-    STRPTR destination = (STRPTR)arg[4];
-    STRPTR prompt = (STRPTR)arg[5];
+    STRPTR attachSpec = (STRPTR)arg[4];
+    STRPTR destination = (STRPTR)arg[5];
+    STRPTR prompt = (STRPTR)arg[6];
+    /* Reference images the provider edits from, rather than generating the
+     * picture from the prompt alone. */
+    struct MinList referenceImages;
+    NewList((struct List *)&referenceImages);
 
     /* Reload config from disk to pick up any changes from the main app */
     DoMethod(configObj, MUIM_AmigaGPTConfig_Load);
@@ -2035,7 +2063,7 @@ HOOKPROTONHNO(CreateImageFunc, APTR, ULONG *arg) {
     if (modelName == NULL || strlen(modelName) == 0) {
         modelName = imgSettings.model;
         if (modelName == NULL || strlen(modelName) == 0) {
-            modelName = OPENAI_IMAGE_MODELS[0];
+            modelName = DEFAULT_OPENAI_IMAGE_MODEL;
         }
     }
 
@@ -2047,6 +2075,11 @@ HOOKPROTONHNO(CreateImageFunc, APTR, ULONG *arg) {
                 break;
             }
         }
+    }
+
+    if (!rexxAttachPathsToList(&referenceImages, attachSpec, TRUE)) {
+        freeChatFiles(&referenceImages);
+        return RETURN_ERROR;
     }
 
     UTF8 *promptUTF8 = CodesetsUTF8Create(CSA_SourceCodeset, (Tag)systemCodeset,
@@ -2067,8 +2100,10 @@ HOOKPROTONHNO(CreateImageFunc, APTR, ULONG *arg) {
         apiKey, imgSettings.useProxy, imgSettings.proxyHost,
         imgSettings.proxyPort, imgSettings.proxyUsesSSL,
         imgSettings.proxyRequiresAuth, imgSettings.proxyUsername,
-        imgSettings.proxyPassword, IMAGE_FORMAT_JPG, imageEndpoint);
+        imgSettings.proxyPassword, IMAGE_FORMAT_JPG, imageEndpoint,
+        &referenceImages);
     CodesetsFreeA(promptUTF8, NULL);
+    freeChatFiles(&referenceImages);
 
     if (response == NULL) {
         printf(STRING_ERROR_CONNECTION);
@@ -2366,6 +2401,15 @@ static void rexxAppendChatModelsForProfile(STRPTR buffer, ULONG bufferSize,
         rexxAppendLine(buffer, bufferSize, STRING_ERROR_FETCHING_MODELS);
         return;
     }
+    ModelListFilter filter = MODEL_LIST_FILTER_CHAT;
+    if (settings.profileName != NULL &&
+        strcmp(settings.profileName, REXX_LOCKED_PROFILE_NAME_OPENAI) == 0)
+        filter = MODEL_LIST_FILTER_OPENAI_CHAT;
+    else if (settings.profileName != NULL &&
+             strcmp(settings.profileName,
+                    REXX_LOCKED_PROFILE_NAME_GEMINI) == 0)
+        filter = MODEL_LIST_FILTER_GEMINI_CHAT;
+    filterModelNames(models, filter);
     rexxAppendModelNamesFromJsonArray(buffer, bufferSize, models);
     json_object_put(models);
 }
@@ -2393,6 +2437,9 @@ static void rexxAppendImageModelsForProfile(STRPTR buffer, ULONG bufferSize,
         rexxAppendLine(buffer, bufferSize, STRING_ERROR_FETCHING_MODELS);
         return;
     }
+    if (settings.profileName != NULL &&
+        rexxIsLockedImageProfileName(settings.profileName))
+        filterModelNames(models, MODEL_LIST_FILTER_IMAGE);
     rexxAppendModelNamesFromJsonArray(buffer, bufferSize, models);
     json_object_put(models);
 }
@@ -2420,6 +2467,7 @@ static void rexxAppendSpeechModelsForProfile(STRPTR buffer, ULONG bufferSize,
         if (models == NULL) {
             rexxAppendLine(buffer, bufferSize, STRING_ERROR_FETCHING_MODELS);
         } else {
+            filterModelNames(models, MODEL_LIST_FILTER_TTS);
             rexxAppendModelNamesFromJsonArray(buffer, bufferSize, models);
             json_object_put(models);
         }
@@ -2657,10 +2705,7 @@ MakeHook(ListVoicesHook, ListVoicesFunc);
 
 HOOKPROTONHNO(ListAudioFormatsFunc, APTR, ULONG *arg) {
     STRPTR formats = AllocVec(1024, MEMF_ANY | MEMF_CLEAR);
-    for (UBYTE i = 0; AUDIO_FORMAT_NAMES[i] != NULL; i++) {
-        strncat(formats, AUDIO_FORMAT_NAMES[i], 1024);
-        strncat(formats, "\n", 1024);
-    }
+    strncpy(formats, "wav\npcm\n", 1023);
     set(app, MUIA_Application_RexxString, formats);
     FreeVec(formats);
     return RETURN_OK;
@@ -2786,14 +2831,19 @@ HOOKPROTONHNO(SpeakTextFunc, APTR, ULONG *arg) {
             }
         }
     }
-    AudioFormat audioFormat = AUDIO_FORMAT_MP3;
+    AudioFormat audioFormat = AUDIO_FORMAT_WAV;
     if (audioFormatString != NULL && strlen(audioFormatString) > 0) {
-        for (UBYTE i = 0; AUDIO_FORMAT_NAMES[i] != NULL; i++) {
-            printf("AUDIO_FORMAT_NAMES[%d]: %s\n", i, AUDIO_FORMAT_NAMES[i]);
-            if (strcasecmp(audioFormatString, AUDIO_FORMAT_NAMES[i]) == 0) {
-                audioFormat = i;
-                break;
-            }
+        if (strcasecmp(audioFormatString, "wav") == 0) {
+            audioFormat = AUDIO_FORMAT_WAV;
+        } else if (strcasecmp(audioFormatString, "pcm") == 0 ||
+                   strcasecmp(audioFormatString, "raw") == 0) {
+            audioFormat = AUDIO_FORMAT_PCM;
+        } else {
+            configFreeSpeechRequestSettings(&speechSettings);
+            set(app, MUIA_Application_RexxString,
+                "FORMAT must be WAV or PCM.");
+            updateStatusBar(STRING_ERROR, redPen);
+            return RETURN_ERROR;
         }
     }
 
@@ -2822,7 +2872,8 @@ HOOKPROTONHNO(SpeakTextFunc, APTR, ULONG *arg) {
         updateStatusBar(STRING_ERROR, redPen);
         return RETURN_ERROR;
     }
-    set(app, MUIA_Application_RexxString, prompt);
+    set(app, MUIA_Application_RexxString,
+        output != NULL && strlen(output) > 0 ? output : prompt);
     updateStatusBar(STRING_READY, greenPen);
     return RETURN_OK;
 }
@@ -2853,8 +2904,8 @@ HOOKPROTONHNO(HelpFunc, APTR, ULONG *arg) {
         "S,PU=PROXYUSERNAME/K,PP=PROXYPASSWORD/K,W=WEBSEARCH/S,"
         "CI=CODEINTERPRETER/S,A=ATTACH/K,D=DESTINATION/K,P=PROMPT/F\n"
         "CREATEIMAGE "
-        "PR=PROFILE/K,M=MODEL/K,S=SIZE/K,K=APIKEY/K,D=DESTINATION/K,P=PROMPT/"
-        "F\n"
+        "PR=PROFILE/K,M=MODEL/K,S=SIZE/K,K=APIKEY/K,A=ATTACH/K,D=DESTINATION/"
+        "K,P=PROMPT/F\n"
         "SPEAKTEXT "
         "PR=PROFILE/K,M=MODEL/K,V=VOICE/K,I=INSTRUCTIONS/K,K=APIKEY/K,"
         "O=OUTPUT/K,F=FORMAT/K,P=PROMPT/F\n"
@@ -2882,8 +2933,9 @@ struct MUI_Command arexxList[] = {
      &SendMessageHook,
      {0, 0, 0, 0, 0}},
     {"CREATEIMAGE",
-     "PR=PROFILE/K,M=MODEL/K,S=SIZE/K,K=APIKEY/K,D=DESTINATION/K,P=PROMPT/F",
-     6,
+     "PR=PROFILE/K,M=MODEL/K,S=SIZE/K,K=APIKEY/K,A=ATTACH/K,D=DESTINATION/K,"
+     "P=PROMPT/F",
+     7,
      &CreateImageHook,
      {0, 0, 0, 0, 0}},
     {"SPEAKTEXT",

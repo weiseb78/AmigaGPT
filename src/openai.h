@@ -152,6 +152,50 @@ extern CONST_STRPTR GEMINI_IMAGE_MODELS[];
 extern CONST_STRPTR GROK_IMAGE_MODELS[];
 
 /**
+ * The chat model each built-in provider starts on. The prepopulated lists are
+ * shown sorted alphabetically, so the default is named here rather than taken
+ * from the first entry of the list.
+ **/
+#define DEFAULT_OPENAI_CHAT_MODEL "gpt-5.6-terra"
+#define DEFAULT_GEMINI_CHAT_MODEL "gemini-flash-latest"
+#define DEFAULT_GROK_CHAT_MODEL "grok-4.5"
+#define DEFAULT_ANTHROPIC_CHAT_MODEL "claude-sonnet-5"
+
+/**
+ * The image model each built-in provider starts on
+ **/
+#define DEFAULT_OPENAI_IMAGE_MODEL "gpt-image-2"
+#define DEFAULT_GEMINI_IMAGE_MODEL "gemini-3-pro-image"
+#define DEFAULT_GROK_IMAGE_MODEL "grok-imagine-image-2.0"
+
+/**
+ * Sort a json array of model or voice entries alphabetically in place, so the
+ * prepopulated lists and anything fetched from a provider are shown in the
+ * same order.
+ * @param array the json array to sort. Entries may be plain strings or objects
+ * @param key the object field to sort on, or NULL when the entries are strings
+ **/
+void sortJsonArrayAlphabetically(struct json_object *array, CONST_STRPTR key);
+
+/**
+ * Filters applied to model ID arrays returned by getChatModels().
+ */
+typedef enum {
+    MODEL_LIST_FILTER_CHAT = 0,
+    MODEL_LIST_FILTER_OPENAI_CHAT,
+    MODEL_LIST_FILTER_GEMINI_CHAT,
+    MODEL_LIST_FILTER_IMAGE,
+    MODEL_LIST_FILTER_TTS
+} ModelListFilter;
+
+/**
+ * Remove model IDs that do not belong in the requested model list.
+ * @param models a json array of model ID strings, modified in place
+ * @param filter the kind of model list being populated
+ */
+void filterModelNames(struct json_object *models, ModelListFilter filter);
+
+/**
  * The chat model OpenAI should use. Commented out models are not supported by
  * the responses endpoint. Do not exceed 32 models or the menu will not display
  * correctly.
@@ -384,6 +428,28 @@ extern CONST_STRPTR IMAGE_FORMAT_NAMES[];
 LONG initOpenAIConnector();
 
 /**
+ * Mark the start of a cancellable network request. Clears any previous
+ * cancellation flag so a later Stop click applies only to this request.
+ **/
+void beginCancellableRequest(void);
+
+/**
+ * Mark the end of a cancellable network request.
+ **/
+void endCancellableRequest(void);
+
+/**
+ * Abort the in-flight network request by closing its socket/TLS session.
+ * Safe to call when no request is active.
+ **/
+void cancelActiveRequest(void);
+
+/**
+ * TRUE if the current request was cancelled with cancelActiveRequest().
+ **/
+BOOL isRequestCancelled(void);
+
+/**
  * Get the chat models from the OpenAI API
  * @param host the host to use
  * @param port the port to use
@@ -462,6 +528,9 @@ struct json_object **postChatMessageToOpenAI(
  * @param proxyPassword the proxy password to use
  * @param imageFormat the image format to use
  * @param apiEndpoint the API endpoint to use
+ * @param referenceImages a list of struct ChatFile to send as reference images,
+ *or NULL for a plain text-to-image request. Only entries with a local path are
+ *used, and their presence turns the request into an image edit
  * @return a pointer to a new json_object containing the response or NULL --
  *Free it with json_object_put when you are done using it
  **/
@@ -472,7 +541,7 @@ struct json_object *postImageCreationRequestToOpenAI(
     CONST_STRPTR apiKey, BOOL useProxy, CONST_STRPTR proxyHost, UWORD proxyPort,
     BOOL proxyUsesSSL, BOOL proxyRequiresAuth, CONST_STRPTR proxyUsername,
     CONST_STRPTR proxyPassword, ImageFormat imageFormat,
-    APIImageEndpoint apiEndpoint);
+    APIImageEndpoint apiEndpoint, struct MinList *referenceImages);
 
 /**
  * Download a file from the internet
@@ -736,7 +805,9 @@ struct json_object *postToolResultsToOpenAI(
  * @param proxyRequiresAuth whether the proxy requires authentication or not
  * @param proxyUsername the proxy username to use
  * @param proxyPassword the proxy password to use
- * @return a pointer to a buffer containing the PCM audio data or NULL -- Free
+ * @param audioFormat AUDIO_FORMAT_WAV requests a WAV container (wav_24000);
+ * otherwise raw PCM (pcm_24000) is requested for AHI playback
+ * @return a pointer to a buffer containing the audio data or NULL -- Free
  * it with FreeVec() when you are done using it
  **/
 APTR postTextToSpeechRequestToElevenLabs(
@@ -746,7 +817,7 @@ APTR postTextToSpeechRequestToElevenLabs(
     CONST_STRPTR apiKey, ULONG *audioLength, BOOL useProxy,
     CONST_STRPTR proxyHost, UWORD proxyPort, BOOL proxyUsesSSL,
     BOOL proxyRequiresAuth, CONST_STRPTR proxyUsername,
-    CONST_STRPTR proxyPassword);
+    CONST_STRPTR proxyPassword, AudioFormat *audioFormat);
 
 /**
  * Post a text to speech request to xAI
@@ -776,9 +847,9 @@ APTR postTextToSpeechRequestToXAI(
     CONST_STRPTR proxyPassword, AudioFormat *audioFormat);
 
 /**
- * Synthesize speech with an OpenVox server. OpenVox returns a WAV file (or a
- * base64 WAV in an audio.chunk event); this function returns its raw
- * little-endian 16-bit mono PCM payload for the shared AHI playback path.
+ * Synthesize speech with an OpenVox server. OpenVox always produces WAV.
+ * Pass AUDIO_FORMAT_WAV to keep that container; otherwise the little-endian
+ * 16-bit mono PCM payload is returned for AHI playback.
  */
 APTR postTextToSpeechRequestToOpenVox(
     CONST_STRPTR text, CONST_STRPTR model, CONST_STRPTR voice,
@@ -787,7 +858,7 @@ APTR postTextToSpeechRequestToOpenVox(
     CONST_STRPTR apiKey, ULONG *audioLength, ULONG *sampleRate, BOOL useProxy,
     CONST_STRPTR proxyHost, UWORD proxyPort, BOOL proxyUsesSSL,
     BOOL proxyRequiresAuth, CONST_STRPTR proxyUsername,
-    CONST_STRPTR proxyPassword);
+    CONST_STRPTR proxyPassword, AudioFormat *audioFormat);
 
 /**
  * Fetch the list of custom voices from xAI (GET /v1/custom-voices).
@@ -810,6 +881,16 @@ struct json_object *getXAICustomVoices(
  * the file name in that case
  **/
 STRPTR detectMimeTypeFromContents(CONST_STRPTR path);
+
+/**
+ * True when an attachment is a picture, so it can be used as a reference image
+ * for image generation.
+ * @param path the file's path, used to guess from the name when no magic
+ * database is installed
+ * @param detectedMime the MIME type libmagic reported, or NULL if it could not
+ * be determined
+ **/
+BOOL attachmentLooksLikeImage(CONST_STRPTR path, CONST_STRPTR detectedMime);
 
 /**
  * True for api.openai.com and for AmiKit's OpenAI-compatible proxy. The proxy

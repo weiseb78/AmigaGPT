@@ -21,6 +21,7 @@ extern Object *loadingBar;
 extern Object *loadingBarGroup;
 extern Object *imageListObject;
 extern Object *imageInputTextEditor;
+extern Object *speechInputTextEditor;
 extern Object *createImageButton;
 extern Object *newImageButton;
 extern Object *deleteImageButton;
@@ -104,3 +105,8 @@ void showLoadingBar();
  * Stops the busy meter and hides the loading bar, leaving it blank
  **/
 void hideLoadingBar();
+
+/**
+ * Refresh the Speech tab transport, playhead and time display.
+ **/
+void updatePlayButton();

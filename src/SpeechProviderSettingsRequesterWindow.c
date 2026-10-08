@@ -7,6 +7,11 @@ LONG createSpeechProviderSettingsRequesterWindow(void) { return RETURN_OK; }
 
 void openSpeechProviderSettingsRequesterWindow(void) {}
 
+CONST_STRPTR speechLookupXAIVoiceName(CONST_STRPTR voiceId) {
+    (void)voiceId;
+    return NULL;
+}
+
 #else
 
 #include <dos/dos.h>
@@ -531,19 +536,25 @@ static void setElevenLabsModelListActiveById(CONST_STRPTR modelId) {
             return;
     }
 
+    /* Count only the entries populateElevenLabsModelList() inserts, so the
+     * list index matches even when an entry is skipped. */
     LONG modelCount = json_object_array_length(modelsArray);
+    LONG listIndex = 0;
     for (LONG i = 0; i < modelCount; i++) {
         struct json_object *modelObj =
             json_object_array_get_idx(modelsArray, i);
         struct json_object *modelIdObj = NULL;
-        if (modelObj != NULL &&
-            json_object_object_get_ex(modelObj, "model_id", &modelIdObj)) {
+        if (modelObj == NULL ||
+            json_object_object_get(modelObj, "name") == NULL)
+            continue;
+        if (json_object_object_get_ex(modelObj, "model_id", &modelIdObj)) {
             CONST_STRPTR mid = json_object_get_string(modelIdObj);
             if (mid != NULL && strcmp(mid, modelId) == 0) {
-                set(elevenLabsModelList, MUIA_NList_Active, i);
+                set(elevenLabsModelList, MUIA_NList_Active, listIndex);
                 return;
             }
         }
+        listIndex++;
     }
 }
 
@@ -574,7 +585,7 @@ static struct json_object *getOpenAITTSModels(CONST_STRPTR host, UWORD port,
                                               AuthorizationType authType,
                                               CONST_STRPTR apiKey) {
     /* getChatModels already targets /<endpointUrl>/models and handles auth /
-     * proxy, so reuse it. The response is the raw OpenAI models payload. */
+     * proxy, so reuse it. It returns a normalized model ID array. */
     return getChatModels((STRPTR)host, (ULONG)port, useSSL, apiKey,
                          configGetProxyEnabled(), configGetProxyHost(),
                          configGetProxyPort(), configGetProxyUsesSSL(),
@@ -582,23 +593,15 @@ static struct json_object *getOpenAITTSModels(CONST_STRPTR host, UWORD port,
                          configGetProxyPassword(), endpointUrl, authType, NULL);
 }
 
-/* Build a "models cache" json object from an OpenAI /v1/models response,
- * keeping only entries whose id contains "tts" - the API doesn't expose a
- * modality flag, so this filter is the closest we can get. */
+/* Build a "models cache" json object from the normalized model ID array,
+ * keeping only IDs containing "tts". */
 static struct json_object *
 filterOpenAITTSModels(struct json_object *rawModels) {
-    if (rawModels == NULL)
+    if (rawModels == NULL ||
+        !json_object_is_type(rawModels, json_type_array))
         return NULL;
 
-    struct json_object *dataArray = NULL;
-    if (!json_object_object_get_ex(rawModels, "data", &dataArray)) {
-        if (json_object_is_type(rawModels, json_type_array))
-            dataArray = rawModels;
-        else
-            return NULL;
-    }
-    if (!json_object_is_type(dataArray, json_type_array))
-        return NULL;
+    filterModelNames(rawModels, MODEL_LIST_FILTER_TTS);
 
     struct json_object *out = json_object_new_object();
     struct json_object *filtered = json_object_new_array();
@@ -608,14 +611,11 @@ filterOpenAITTSModels(struct json_object *rawModels) {
     for (UBYTE i = 0; OPENAI_TTS_MODEL_NAMES[i] != NULL; i++)
         addDefaultOpenAITTSModel(filtered, OPENAI_TTS_MODEL_NAMES[i]);
 
-    LONG count = json_object_array_length(dataArray);
+    LONG count = json_object_array_length(rawModels);
     for (LONG i = 0; i < count; i++) {
-        struct json_object *entry = json_object_array_get_idx(dataArray, i);
-        struct json_object *idObj = NULL;
-        if (entry == NULL || !json_object_object_get_ex(entry, "id", &idObj))
-            continue;
-        CONST_STRPTR id = json_object_get_string(idObj);
-        if (id == NULL || strstr(id, "tts") == NULL)
+        struct json_object *entry = json_object_array_get_idx(rawModels, i);
+        CONST_STRPTR id = entry != NULL ? json_object_get_string(entry) : NULL;
+        if (id == NULL)
             continue;
 
         /* Skip duplicates already added from the defaults. */
@@ -656,19 +656,25 @@ static void setOpenAITtsModelListActiveById(CONST_STRPTR modelId) {
             return;
     }
 
+    /* Count only the entries populateOpenAITtsModelList() inserts, so the
+     * list index matches even when an entry is skipped. */
     LONG modelCount = json_object_array_length(modelsArray);
+    LONG listIndex = 0;
     for (LONG i = 0; i < modelCount; i++) {
         struct json_object *modelObj =
             json_object_array_get_idx(modelsArray, i);
         struct json_object *idObj = NULL;
-        if (modelObj != NULL &&
-            json_object_object_get_ex(modelObj, "id", &idObj)) {
-            CONST_STRPTR mid = json_object_get_string(idObj);
-            if (mid != NULL && strcmp(mid, modelId) == 0) {
-                set(openAiTtsModelList, MUIA_NList_Active, i);
-                return;
-            }
+        if (modelObj == NULL ||
+            !json_object_object_get_ex(modelObj, "id", &idObj))
+            continue;
+        CONST_STRPTR mid = json_object_get_string(idObj);
+        if (mid == NULL)
+            continue;
+        if (strcmp(mid, modelId) == 0) {
+            set(openAiTtsModelList, MUIA_NList_Active, listIndex);
+            return;
         }
+        listIndex++;
     }
 }
 
@@ -766,14 +772,22 @@ static void populateXAIVoiceList(void) {
         /* Reuse the stored "display" field if already built; otherwise
          * compute and stash it so the NList display hook has stable
          * memory to point at. */
-        struct json_object *disp = json_object_object_get(v, "display");
-        if (disp == NULL) {
+        if (json_object_object_get(v, "display") == NULL) {
             UBYTE buf[128];
             CONST_STRPTR d = xaiVoiceDisplayString(v, buf, sizeof(buf));
             json_object_object_add(v, "display",
                                    json_object_new_string(d ? d : ""));
-            disp = json_object_object_get(v, "display");
         }
+    }
+
+    /* Sort on the display text so built-in and fetched voices interleave
+     * alphabetically. The array order is what the active list index maps
+     * back to, so sorting it keeps the two in step. */
+    sortJsonArrayAlphabetically(voices, "display");
+
+    for (LONG i = 0; i < count; i++) {
+        struct json_object *v = json_object_array_get_idx(voices, i);
+        struct json_object *disp = json_object_object_get(v, "display");
         STRPTR entry = (STRPTR)json_object_get_string(disp);
         DoMethod(xaiVoiceList, MUIM_NList_InsertSingle, entry,
                  MUIV_NList_Insert_Bottom);
@@ -797,6 +811,57 @@ static void setXAIVoiceListActiveById(CONST_STRPTR voiceId) {
             return;
         }
     }
+}
+
+static CONST_STRPTR currentXAIVoiceIdFromUI(void);
+
+static CONST_STRPTR xaiBuiltinPrettyName(CONST_STRPTR voiceId) {
+    static const CONST_STRPTR pretty[] = {"Ara", "Eve", "Leo", "Rex", "Sal"};
+    UBYTE i;
+
+    if (voiceId == NULL || voiceId[0] == '\0')
+        return NULL;
+    for (i = 0; XAI_TTS_VOICE_NAMES[i] != NULL; i++) {
+        if (strcasecmp(voiceId, XAI_TTS_VOICE_NAMES[i]) == 0)
+            return pretty[i];
+    }
+    return NULL;
+}
+
+CONST_STRPTR speechLookupXAIVoiceName(CONST_STRPTR voiceId) {
+    struct json_object *voices = NULL;
+    LONG i;
+    LONG count;
+
+    if (voiceId == NULL || voiceId[0] == '\0')
+        return xaiBuiltinPrettyName(voiceId);
+    if (xaiVoicesJson == NULL ||
+        !json_object_object_get_ex(xaiVoicesJson, "voices", &voices))
+        return xaiBuiltinPrettyName(voiceId);
+    count = json_object_array_length(voices);
+    for (i = 0; i < count; i++) {
+        struct json_object *voice = json_object_array_get_idx(voices, i);
+        struct json_object *idObj =
+            voice != NULL ? json_object_object_get(voice, "voice_id") : NULL;
+        CONST_STRPTR id = idObj != NULL ? json_object_get_string(idObj) : NULL;
+        struct json_object *nameObj;
+        CONST_STRPTR name;
+
+        if (id == NULL || strcmp(id, voiceId) != 0)
+            continue;
+        nameObj = json_object_object_get(voice, "name");
+        name = nameObj != NULL ? json_object_get_string(nameObj) : NULL;
+        if (name != NULL && name[0] != '\0')
+            return name;
+        return xaiBuiltinPrettyName(voiceId);
+    }
+    return xaiBuiltinPrettyName(voiceId);
+}
+
+static CONST_STRPTR currentXAIVoiceNameFromUI(void) {
+    CONST_STRPTR id = currentXAIVoiceIdFromUI();
+    CONST_STRPTR name = speechLookupXAIVoiceName(id);
+    return name != NULL ? name : id;
 }
 
 static CONST_STRPTR currentXAIVoiceIdFromUI(void) {
@@ -895,8 +960,11 @@ static void populateOpenAITtsModelList(void) {
             return;
     }
 
+    sortJsonArrayAlphabetically(modelsArray, "id");
+
     LONG modelCount = json_object_array_length(modelsArray);
     LONG selectedIndex = MUIV_NList_Active_Off;
+    LONG insertedCount = 0;
     STRPTR currentModelId = configGetOpenAITTSModelId();
 
     for (LONG i = 0; i < modelCount; i++) {
@@ -913,7 +981,8 @@ static void populateOpenAITtsModelList(void) {
         DoMethod(openAiTtsModelList, MUIM_NList_InsertSingle, id,
                  MUIV_NList_Insert_Bottom);
         if (currentModelId != NULL && strcmp(currentModelId, id) == 0)
-            selectedIndex = i;
+            selectedIndex = insertedCount;
+        insertedCount++;
     }
 
     if (selectedIndex != MUIV_NList_Active_Off)
@@ -938,8 +1007,11 @@ static void populateElevenLabsModelList(void) {
         }
     }
 
+    sortJsonArrayAlphabetically(modelsArray, "name");
+
     LONG modelCount = json_object_array_length(modelsArray);
     LONG selectedIndex = MUIV_NList_Active_Off;
+    LONG insertedCount = 0;
     STRPTR currentModelId = configGetElevenLabsModel();
     STRPTR currentModelName = NULL;
     if (elevenLabsCurrentModelText != NULL)
@@ -960,15 +1032,16 @@ static void populateElevenLabsModelList(void) {
                 json_object_object_get_ex(modelObj, "model_id", &modelIdObj)) {
                 CONST_STRPTR mid = json_object_get_string(modelIdObj);
                 if (mid != NULL && strcmp(currentModelId, mid) == 0) {
-                    selectedIndex = i;
+                    selectedIndex = insertedCount;
                 }
             }
             if (selectedIndex == MUIV_NList_Active_Off &&
                 currentModelName != NULL &&
                 strcmp(currentModelName, STRING_NONE_SELECTED) != 0 &&
                 strcmp(currentModelName, name) == 0) {
-                selectedIndex = i;
+                selectedIndex = insertedCount;
             }
+            insertedCount++;
         }
     }
 
@@ -994,8 +1067,11 @@ static void populateElevenLabsVoiceList(void) {
         }
     }
 
+    sortJsonArrayAlphabetically(voicesArray, "name");
+
     LONG voiceCount = json_object_array_length(voicesArray);
     LONG selectedIndex = MUIV_NList_Active_Off;
+    LONG insertedCount = 0;
     STRPTR currentVoiceID = configGetElevenLabsVoiceID();
 
     for (LONG i = 0; i < voiceCount; i++) {
@@ -1013,9 +1089,10 @@ static void populateElevenLabsVoiceList(void) {
                 json_object_object_get_ex(voiceObj, "voice_id", &voiceIdObj)) {
                 CONST_STRPTR vid = json_object_get_string(voiceIdObj);
                 if (vid != NULL && strcmp(currentVoiceID, vid) == 0) {
-                    selectedIndex = i;
+                    selectedIndex = insertedCount;
                 }
             }
+            insertedCount++;
         }
     }
 
@@ -1256,8 +1333,11 @@ static void populateOpenVoxList(Object *list, struct json_object *response,
         !json_object_object_get_ex(response, "data", &data) ||
         !json_object_is_type(data, json_type_array))
         return;
+    sortJsonArrayAlphabetically(data, key);
+
     LONG selected = MUIV_NList_Active_Off;
     LONG count = json_object_array_length(data);
+    LONG insertedCount = 0;
     for (LONG i = 0; i < count; i++) {
         struct json_object *entry = json_object_array_get_idx(data, i);
         struct json_object *valueObj =
@@ -1268,9 +1348,10 @@ static void populateOpenVoxList(Object *list, struct json_object *response,
         DoMethod(list, MUIM_NList_InsertSingle, (ULONG)value,
                  MUIV_NList_Insert_Bottom);
         if (selectedValue != NULL && strcmp(selectedValue, value) == 0)
-            selected = i;
+            selected = insertedCount;
+        insertedCount++;
     }
-    if (selected == MUIV_NList_Active_Off && count > 0)
+    if (selected == MUIV_NList_Active_Off && insertedCount > 0)
         selected = 0;
     if (selected != MUIV_NList_Active_Off)
         set(list, MUIA_NList_Active, selected);
@@ -2327,6 +2408,8 @@ static struct json_object *createDefaultProfile(CONST_STRPTR name) {
     json_object_object_add(
         p, "xaiTTSVoiceId",
         json_object_new_string(XAI_TTS_VOICE_NAMES[XAI_TTS_VOICE_EVE]));
+    json_object_object_add(p, "xaiTTSVoiceName",
+                           json_object_new_string("Eve"));
     json_object_object_add(p, "xaiAutoSpeechTags",
                            json_object_new_boolean(TRUE));
     json_object_object_add(p, "openVoxApiKey", json_object_new_string(""));
@@ -2470,6 +2553,14 @@ static struct json_object *createBuiltinProfileFromConfig(SpeechSystem sys) {
                 vid = (STRPTR)XAI_TTS_VOICE_NAMES[XAI_TTS_VOICE_EVE];
             json_object_object_add(p, "xaiTTSVoiceId",
                                    json_object_new_string(vid));
+            {
+                CONST_STRPTR vname = configGetXAITTSVoiceName();
+                if (vname == NULL || vname[0] == '\0')
+                    vname = speechLookupXAIVoiceName(vid);
+                json_object_object_add(
+                    p, "xaiTTSVoiceName",
+                    json_object_new_string(vname != NULL ? vname : ""));
+            }
         }
         json_object_object_add(
             p, "xaiAutoSpeechTags",
@@ -2796,6 +2887,14 @@ static struct json_object *createProfileFromUI(CONST_STRPTR name) {
             uiVid = XAI_TTS_VOICE_NAMES[XAI_TTS_VOICE_EVE];
         json_object_object_add(p, "xaiTTSVoiceId",
                                json_object_new_string(uiVid));
+        {
+            CONST_STRPTR uiName = currentXAIVoiceNameFromUI();
+            if (uiName == NULL || uiName[0] == '\0')
+                uiName = speechLookupXAIVoiceName(uiVid);
+            json_object_object_add(
+                p, "xaiTTSVoiceName",
+                json_object_new_string(uiName != NULL ? uiName : ""));
+        }
         /* Keep the legacy enum field in sync for old readers - match the
          * id to a builtin index when possible. */
         LONG enumIdx = (LONG)XAI_TTS_VOICE_EVE;
@@ -2973,6 +3072,13 @@ static void commitBuiltinProfileToConfig(struct json_object *profile) {
         CONST_STRPTR vid = jsonStringOrEmpty(profile, "xaiTTSVoiceId");
         if (vid != NULL && strlen(vid) > 0)
             configSetXAITTSVoiceId(vid);
+        {
+            CONST_STRPTR vname =
+                jsonStringOrEmpty(profile, "xaiTTSVoiceName");
+            if (vname == NULL || vname[0] == '\0')
+                vname = speechLookupXAIVoiceName(vid);
+            configSetXAITTSVoiceName(vname != NULL ? vname : "");
+        }
         struct json_object *atObj =
             json_object_object_get(profile, "xaiAutoSpeechTags");
         if (atObj != NULL)
@@ -3906,7 +4012,7 @@ LONG createSpeechProviderSettingsRequesterWindow(void) {
 
                         Child, xaiGroup = VGroup,
                             MUIA_Frame, MUIV_Frame_Group,
-                            MUIA_FrameTitle, "xAI",
+                            MUIA_FrameTitle, SPEECH_SYSTEM_NAMES[SPEECH_SYSTEM_XAI],
                             Child, VGroup,
                                 MUIA_Frame, MUIV_Frame_Group,
                                 MUIA_FrameTitle, STRING_MENU_OPENAI_API_KEY,

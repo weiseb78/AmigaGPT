@@ -1446,8 +1446,8 @@ msgstr "En-têtes personnalisés"
 
 #: src/CustomServerSettingsRequesterWindow.c
 msgctxt "STRING_MENU_TEMPLATE_XAI_GROK (274//)"
-msgid "xAI Grok"
-msgstr "xAI Grok"
+msgid "SpaceXAI Grok"
+msgstr "SpaceXAI Grok"
 
 #: src/CustomServerSettingsRequesterWindow.c
 msgctxt "STRING_PROFILES (275//)"
@@ -1526,8 +1526,8 @@ msgstr "Google Gemini"
 
 #: src/openai.c
 msgctxt "STRING_PROVIDER_GROK (291//)"
-msgid "xAI Grok"
-msgstr "xAI Grok"
+msgid "SpaceXAI Grok"
+msgstr "SpaceXAI Grok"
 
 #: src/openai.c
 msgctxt "STRING_PROVIDER_ANTHROPIC (292//)"
@@ -2263,9 +2263,187 @@ msgctxt "STRING_WAITING_FOR_MORE_DATA (428//)"
 msgid "Waiting for more response data..."
 msgstr "Waiting for more response data..."
 
-#~ msgctxt "STRING_CLEAR_ATTACHMENTS (366//)"
+#~ msgctxt "STRING_CLEAR_ATTACHMENTS (405//)"
 #~ msgid "Clear"
 #~ msgstr "Clear"
+
+#: src/MainWindow.c
+msgctxt "STRING_EDIT_IMAGE (429//)"
+msgid "Edit..."
+msgstr "Modifier..."
+
+#: src/MainWindow.c
+msgctxt "STRING_ATTACH_REFERENCE_IMAGES (430//)"
+msgid "Attach images..."
+msgstr "Joindre des images..."
+
+#: src/MainWindow.c
+msgctxt "STRING_CLEAR_REFERENCE_IMAGES (431//)"
+msgid "Clear"
+msgstr "Effacer"
+
+#: src/MainWindow.c
+msgctxt "STRING_NO_REFERENCE_IMAGES (432//)"
+msgid "No reference images"
+msgstr "Aucune image de référence"
+
+#: src/MainWindow.c
+msgctxt "STRING_REFERENCE_IMAGES_ATTACHED_FORMAT (433//)"
+msgid "%lu reference image(s)"
+msgstr "%lu image(s) de référence"
+
+#: src/MainWindow.c
+msgctxt "STRING_ERROR_NOT_AN_IMAGE (434//)"
+msgid "Only image files can be used as reference images."
+msgstr "Seuls les fichiers image peuvent servir d'images de référence."
+
+#: src/MainWindow.c
+msgctxt "STRING_STOP (435//)"
+msgid "Stop"
+msgstr "Stop"
+
+#: src/MainWindow.c
+msgctxt "STRING_NEW_PHRASE (436//)"
+msgid "New Phrase"
+msgstr "Nouvelle phrase"
+
+#: src/MainWindow.c
+msgctxt "STRING_DELETE_PHRASE (437//)"
+msgid "Delete Phrase"
+msgstr "Supprimer la phrase"
+
+#: src/MainWindow.c
+msgctxt "STRING_GENERATE_SPEECH (438//)"
+msgid "Generate"
+msgstr "Generate"
+
+#: src/MainWindow.c
+msgctxt "STRING_REGENERATE (439//)"
+msgid "Regenerate"
+msgstr "Regenerate"
+
+#: src/MainWindow.c
+msgctxt "STRING_PLAY (440//)"
+msgid "Play"
+msgstr "Play"
+
+#: src/MainWindow.c
+msgctxt "STRING_SAVE_SPEECH_COPY (441//)"
+msgid "Save Speech Copy"
+msgstr "Enregistrer la copie audio"
+
+#: src/MainWindow.c
+msgctxt "STRING_GENERATE_TEXT_WITH_AI (442//)"
+msgid "Generate text with AI"
+msgstr "Generate text with AI"
+
+#: src/MainWindow.c
+msgctxt "STRING_SPEAK_CONTENTS_OF_FILES (443//)"
+msgid "Speak contents of files"
+msgstr "Speak contents of files"
+
+#: src/MainWindow.c
+msgctxt "STRING_GENERATING_SPEECH (444//)"
+msgid "Generating speech..."
+msgstr "Génération de l'audio..."
+
+#: src/MainWindow.c
+msgctxt "STRING_ERROR_SPEECH_HISTORY_CREATE (445//)"
+msgid "Failed to create speech history file. Phrase history will not be saved."
+msgstr ""
+"Échec de la création du fichier d'historique vocal. L'historique des "
+"phrases ne sera pas enregistré."
+
+#: src/MainWindow.c
+msgctxt "STRING_ERROR_SPEECH_HISTORY_WRITE (446//)"
+msgid ""
+"Failed to write to speech history file. Phrase history will not be saved."
+msgstr ""
+"Échec de l'écriture dans le fichier d'historique vocal. L'historique des "
+"phrases ne sera pas enregistré."
+
+#: src/MainWindow.c
+msgctxt "STRING_ERROR_SPEECH_HISTORY_READ (447//)"
+msgid ""
+"Failed to read from speech history file. Phrase history will not be loaded"
+msgstr ""
+"Impossible de lire le fichier d'historique vocal. L'historique des phrases "
+"ne sera pas chargé"
+
+#: src/MainWindow.c
+msgctxt "STRING_ERROR_SPEECH_HISTORY_PARSE_BACKUP (448//)"
+msgid ""
+"Failed to parse speech history. Malformed JSON. The speech-history.json file "
+"is probably corrupted. Phrase history will not be loaded. A backup of the "
+"speech-history.json file has been created as speech-history.json.bak"
+msgstr ""
+"Impossible d'analyser l'historique vocal. JSON mal formé. Le fichier "
+"speech-history.json est probablement corrompu. L'historique des phrases ne "
+"sera pas chargé. Une sauvegarde du fichier speech-history.json a été créée "
+"sous le nom speech-history.json.bak"
+
+#: src/MainWindow.c
+msgctxt "STRING_ERROR_SPEECH_HISTORY_PARSE_BACKUP_RAM (449//)"
+msgid ""
+"Failed to parse speech history. Malformed JSON. The speech-history.json file "
+"is probably corrupted. Phrase history will not be loaded. There was an error "
+"writing a backup of the speech history to disk but a copy has been saved to "
+"RAM:speech-history.json"
+msgstr ""
+"Impossible d'analyser l'historique vocal. JSON mal formé. Le fichier "
+"speech-history.json est probablement corrompu. L'historique des phrases ne "
+"sera pas chargé. Une erreur est survenue lors de l'écriture d'une "
+"sauvegarde de l'historique vocal sur le disque, mais une copie a été "
+"enregistrée dans RAM:speech-history.json"
+
+#: src/MainWindow.c
+msgctxt "STRING_ERROR_SPEECH_HISTORY_PARSE_NO_BACKUP (450//)"
+msgid ""
+"Failed to parse speech history. The speech-history.json file is probably "
+"corrupted. Phrase history will not be loaded."
+msgstr ""
+"Impossible d'analyser l'historique vocal. Le fichier speech-history.json "
+"est probablement corrompu. L'historique des phrases ne sera pas chargé."
+
+#: src/MainWindow.c
+msgctxt "STRING_REQUEST_CANCELLED (451//)"
+msgid "Request cancelled"
+msgstr "Requête annulée"
+
+#: src/MainWindow.c
+msgctxt "STRING_PAUSE (452//)"
+msgid "Pause"
+msgstr "Pause"
+
+#: src/MainWindow.c
+msgctxt "STRING_REWIND (453//)"
+msgid "Rewind"
+msgstr "Rembobiner"
+
+#: src/MainWindow.c
+msgctxt "STRING_NO_SPEECH_SELECTED (454//)"
+msgid "Select a phrase to see its speech profile and waveform."
+msgstr "Sélectionnez une phrase pour voir son profil vocal et sa forme d'onde."
+
+#: src/MainWindow.c
+msgctxt "STRING_SPEECH_PROFILE (455//)"
+msgid "Profile"
+msgstr "Profil"
+
+#: src/MainWindow.c
+msgctxt "STRING_SPEECH_SYSTEM_LABEL (456//)"
+msgid "System"
+msgstr "Système"
+
+#: src/MainWindow.c
+msgctxt "STRING_SPEECH_NO_PROFILE (457//)"
+msgid "No profile was recorded for this phrase."
+msgstr "Aucun profil n'a été enregistré pour cette phrase."
+
+#: src/MainWindow.c
+msgctxt "STRING_SPEECH_LANGUAGE (458//)"
+msgid "Language"
+msgstr "Langue"
 
 #~ msgctxt "STRING_MENU_OPENAI_VOICE (133//)"
 #~ msgid "OpenAI Voice"
@@ -2274,3 +2452,4 @@ msgstr "Waiting for more response data..."
 #~ msgctxt "STRING_MENU_SPEECH_OPENAI_MODEL (140//)"
 #~ msgid "OpenAI Speech Model"
 #~ msgstr "Modèle de parole OpenAI"
+

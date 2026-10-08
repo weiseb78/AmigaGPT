@@ -10,6 +10,8 @@
 #endif
 #include <libraries/mui.h>
 #include <mui/Aboutbox_mcc.h>
+#include <mui/ActionTextEditor_mcc.h>
+#include <mui/AudioPlayer_mcc.h>
 #include <mui/BetterString_mcc.h>
 #include <mui/Busy_mcc.h>
 #include <mui/Guigfx_mcc.h>
@@ -30,7 +32,6 @@
 #include <exec/memory.h>
 #include "AboutAmigaGPTWindow.h"
 #include "AmigaGPTConfig.h"
-#include "AmigaGPTTextEditor.h"
 #include "APIKeyRequesterWindow.h"
 #include "ARexx.h"
 #include "CustomServerSettingsRequesterWindow.h"
@@ -45,6 +46,7 @@
 #include "menu.h"
 #include "MainWindow.h"
 #include "ProxySettingsRequesterWindow.h"
+#include "speech.h"
 #include "version.h"
 
 #ifdef __AMIGAOS4__
@@ -129,9 +131,10 @@ static void closeGUILibraries();
 static STRPTR wrapRequesterText(CONST_STRPTR message);
 
 static CONST_STRPTR USED_CLASSES[] = {
-    MUIC_Aboutbox,   MUIC_Busy,       MUIC_NList,
-    MUIC_NListview,  MUIC_TextEditor, MUIC_BetterString,
-    MUIC_NFloattext, MUIC_Guigfx,
+    MUIC_Aboutbox,          MUIC_Busy,           MUIC_NList,
+    MUIC_NListview,         MUIC_TextEditor,     MUIC_BetterString,
+    MUIC_NFloattext,        MUIC_Guigfx,         MUIC_ActionTextEditor,
+    MUIC_AudioPlayer,
 #ifdef __MORPHOS__
     MUIC_Scintilla,
 #endif
@@ -178,6 +181,15 @@ LONG openGUILibraries() {
         return RETURN_ERROR;
     }
 #endif
+
+    struct Library *AROSBase;
+
+    if ((AROSBase = OpenLibrary("aros.library", 0))) {
+        isAROS = TRUE;
+        CloseLibrary(AROSBase);
+    } else {
+        isAROS = FALSE;
+    }
 
     isMUI5 = MUIMasterBase->lib_Version >= 21;
     isMUI39 = MUIMasterBase->lib_Version == 20;
@@ -459,6 +471,10 @@ static BOOL checkMUICustomClassInstalled() {
             continue;
         if (!isAROS && !strcmp(USED_CLASSES[i], MUIC_BetterString) != 0)
             continue;
+        if (isAROS && !strcmp(USED_CLASSES[i], MUIC_TextEditor) != 0)
+            continue;
+        if (isAROS && !strcmp(USED_CLASSES[i], MUIC_ActionTextEditor) != 0)
+            continue;
         if (!MUI_GetClass(USED_CLASSES[i])) {
             displayError(STRING_ERROR_MUI_CUSTOM_CLASS_NOT_FOUND);
             putchar(':');
@@ -539,8 +555,23 @@ void startGUIRunLoop() {
         // processed so keep the Edit menu items in sync with it
         updateEditMenuItemsEnabled();
 #endif
-        if (running && signals)
-            signals = Wait(signals | SIGBREAKF_CTRL_C);
+#ifndef DAEMON
+        /* Every network request runs synchronously inside an input hook, so
+         * reaching the idle wait means nothing is in flight any more - stop
+         * the busy meter here rather than relying on each request path to
+         * clear it on every one of its exits. */
+        hideLoadingBar();
+        speechServicePlayback();
+        updatePlayButton();
+#endif
+        {
+            ULONG waitMask = signals;
+#ifndef DAEMON
+            waitMask |= speechPlaybackSignalMask();
+#endif
+            if (running && waitMask)
+                signals = Wait(waitMask | SIGBREAKF_CTRL_C);
+        }
         if (signals & SIGBREAKF_CTRL_C) {
             mainWindowSignalQuit();
             running = FALSE;
@@ -1812,9 +1843,6 @@ void shutdownGUI() {
         codeBlocksViewContents = NULL;
     }
 #endif
-    if (isMUI5 || isMUI39) {
-        deleteAmigaGPTTextEditor();
-    }
 #endif
 
     closeGUILibraries();
