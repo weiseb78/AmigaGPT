@@ -1941,10 +1941,12 @@ static LONG sslConnectWithMuiPump(SSL *s) {
 
 #ifdef __MORPHOS__
     if (IoctlSocket(sock, FIONBIO, (char *)&nbFlag) < 0) {
+        /* TCP path cleared NB; blocking SSL_connect would freeze the UI. */
         streamLogApiError("ssl_connect", "FIONBIO on failed");
-    } else {
-        streamLogApiError("ssl_connect", "FIONBIO on");
+        displayError(STRING_ERROR_CONNECTING_OPENAI);
+        return -1;
     }
+    streamLogApiError("ssl_connect", "FIONBIO on");
 #endif
 
 #ifdef SSL_MODE_AUTO_RETRY

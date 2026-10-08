@@ -2118,15 +2118,21 @@ void chatOutputScintillaCancelDeferredStyles(void) {
      * before CancelDeferredStyles and must keep the list/final-paint skip. */
 }
 
+static void chatOutputScintillaCancelDeferredAppend(void);
+static BOOL chatOutputScintillaReplaceBusy;
+static char *chatOutputAppendUtf8;
+
 BOOL chatOutputScintillaHasDeferredWorkPending(void) {
-    return chatOutputDeferredRoleStyles != NULL;
+    return chatOutputDeferredRoleStyles != NULL || chatOutputAppendUtf8 != NULL;
 }
 
 void chatOutputScintillaQuiesceForShutdown(Object *sci) {
     (void)sci;
     streamLogLifecycle("chat scintilla quiesce for shutdown begin");
     chatOutputScintillaCancelPendingCodeblockOpen();
+    chatOutputScintillaCancelDeferredAppend();
     chatOutputScintillaCancelDeferredStyles();
+    chatOutputScintillaReplaceBusy = FALSE;
     /*
      * No SCI_CANCEL / SETMODEVENTMASK on quit - can hard-freeze MorphOS on large
      * styled chat docs; MUI_DisposeObject tears Scintilla down without clearing.
@@ -2779,10 +2785,42 @@ void chatOutputScintillaClearDocument(Object *sci) {
     streamLogLifecycle("chat scintilla clear done");
 }
 
-/* TRUE while docswap+APPENDTEXT runs; nested refresh must not re-enter. */
-static BOOL chatOutputScintillaReplaceBusy;
+/* Large paints: APPENDTEXT across PushMethod ticks so the OS stays responsive. */
+#define CHAT_OUTPUT_APPEND_SYNC_MAX 4096UL
+#define CHAT_OUTPUT_APPEND_BATCH 1024UL
+#define CHAT_OUTPUT_APPEND_CHUNK 128UL
+
+static Object *chatOutputAppendSci;
+static ULONG chatOutputAppendLen;
+static ULONG chatOutputAppendOff;
+static UBYTE *chatOutputAppendStyles;
+static ULONG chatOutputAppendStyleLen;
+static BOOL chatOutputAppendPreserveViewport;
+static sptr_t chatOutputAppendFirstVisible;
+static sptr_t chatOutputAppendOldLineCount;
+static BOOL chatOutputAppendSkipViewport;
+
+static void chatOutputScintillaCancelDeferredAppend(void) {
+    if (chatOutputAppendUtf8 != NULL) {
+        FreeVec(chatOutputAppendUtf8);
+        chatOutputAppendUtf8 = NULL;
+    }
+    if (chatOutputAppendStyles != NULL) {
+        FreeVec(chatOutputAppendStyles);
+        chatOutputAppendStyles = NULL;
+    }
+    chatOutputAppendSci = NULL;
+    chatOutputAppendLen = 0;
+    chatOutputAppendOff = 0;
+    chatOutputAppendStyleLen = 0;
+    chatOutputAppendPreserveViewport = FALSE;
+    chatOutputAppendFirstVisible = 0;
+    chatOutputAppendOldLineCount = 1;
+    chatOutputAppendSkipViewport = FALSE;
+}
 
 void chatOutputScintillaResetPaintGuards(void) {
+    chatOutputScintillaCancelDeferredAppend();
     chatOutputScintillaReplaceBusy = FALSE;
     chatOutputScintillaCancelDeferredStyles();
     chatOutputScintillaMorphosSkipViewport = FALSE;
@@ -2792,11 +2830,10 @@ static void chatOutputScintillaAppendTextChunked(Object *sci, const char *utf8,
                                                  ULONG textLen) {
     ULONG off = 0;
     ULONG chunks = 0;
-    /* One large APPENDTEXT hard-freezes MorphOS (OS reset). Keep chunks small.
-     * Only CheckRefresh here -- NewInput re-entered deferred style/refresh
-     * hooks, cancelled pending hotspot styles, and left [Codeblock n] inert. */
-    const ULONG chunk = 128UL;
+    const ULONG chunk = CHAT_OUTPUT_APPEND_CHUNK;
 
+    /* Only CheckRefresh here -- NewInput re-enters deferred style/refresh and
+     * can cancel pending hotspot styles. No yield at all hard-freezes MorphOS. */
     while (off < textLen) {
         ULONG n = textLen - off;
         if (n > chunk) {
@@ -2810,6 +2847,129 @@ static void chatOutputScintillaAppendTextChunked(Object *sci, const char *utf8,
         }
     }
 }
+
+static void chatOutputScintillaFinishReplaceAfterAppend(
+    Object *sci, const char *utf8, const UBYTE *roleStyles, ULONG roleStyleLen,
+    ULONG textLen, BOOL preserveViewport, sptr_t firstVisibleLine,
+    sptr_t oldLineCount) {
+    chatOutputScintillaApplyLineWrap(sci);
+    chatOutputStreamSyncedUtf8Len = textLen;
+    if (roleStyles != NULL && roleStyleLen > 0) {
+        if (roleStyleLen > textLen) {
+            roleStyleLen = textLen;
+        }
+        chatOutputScintillaCancelDeferredStyles();
+        if (app != NULL && chatOutputDeferredRoleStyles == NULL) {
+            chatOutputDeferredRoleStyles =
+                (UBYTE *)AllocVec(roleStyleLen, MEMF_ANY);
+            if (chatOutputDeferredRoleStyles != NULL) {
+                memcpy(chatOutputDeferredRoleStyles, roleStyles, roleStyleLen);
+                chatOutputDeferredRoleStyleLen = roleStyleLen;
+                chatOutputDeferredPreserveViewport = preserveViewport;
+                chatOutputDeferredFirstVisibleLine = firstVisibleLine;
+                chatOutputDeferredOldLineCount = oldLineCount;
+                chatOutputDeferredSci = sci;
+                streamLogLifecycle("chat scintilla apply styles defer scheduled");
+                DoMethod(app, MUIM_Application_PushMethod, app, 2, MUIM_CallHook,
+                         &ChatOutputSciApplyStylesDeferredHook);
+                return;
+            }
+        }
+        streamLogLifecycle("chat scintilla apply styles begin");
+        chatOutputScintillaApplyRoleStyleBytes(sci, roleStyles, roleStyleLen);
+        streamLogLifecycle("chat scintilla apply styles done");
+    } else if (textLen > 0 && utf8 != NULL) {
+        UBYTE *styleBuf = (UBYTE *)AllocVec(textLen, MEMF_ANY);
+
+        streamLogLifecycle("chat scintilla apply styles begin");
+        if (styleBuf != NULL) {
+            memset(styleBuf, CHAT_OUTPUT_STYLE_ASSISTANT, textLen);
+            chatOutputScintillaAugmentStyleBytesHotspots(utf8, styleBuf, textLen);
+            chatOutputScintillaApplyRoleStyleBytes(sci, styleBuf, textLen);
+            FreeVec(styleBuf);
+        }
+        streamLogLifecycle("chat scintilla apply styles done");
+    }
+    codeBlocksScintillaCommand(sci, SCI_SETREADONLY, 1, 0);
+    if (!chatOutputScintillaMorphosSkipViewport &&
+        (preserveViewport || textLen <= (24 * 1024))) {
+        streamLogLifecycle("chat scintilla viewport begin");
+        chatOutputScintillaFinishViewport(sci, firstVisibleLine, oldLineCount,
+                                          preserveViewport);
+        streamLogLifecycle("chat scintilla viewport done");
+    }
+}
+
+extern struct Hook ChatOutputSciAppendContinueHook;
+
+HOOKPROTONHNONP(ChatOutputSciAppendContinueFunc, void) {
+    Object *sci = chatOutputAppendSci;
+    ULONG batch = 0;
+
+    if (mainWindowIsShuttingDown() || sci == NULL || chatOutputAppendUtf8 == NULL) {
+        chatOutputScintillaCancelDeferredAppend();
+        chatOutputScintillaReplaceBusy = FALSE;
+        return;
+    }
+
+    while (chatOutputAppendOff < chatOutputAppendLen &&
+           batch < CHAT_OUTPUT_APPEND_BATCH) {
+        ULONG n = chatOutputAppendLen - chatOutputAppendOff;
+        if (n > CHAT_OUTPUT_APPEND_CHUNK) {
+            n = CHAT_OUTPUT_APPEND_CHUNK;
+        }
+        codeBlocksScintillaCommand(
+            sci, SCI_APPENDTEXT, n,
+            (sptr_t)(chatOutputAppendUtf8 + chatOutputAppendOff));
+        chatOutputAppendOff += n;
+        batch += n;
+    }
+    if (app != NULL && !mainWindowIsShuttingDown()) {
+        (void)DoMethod(app, MUIM_Application_CheckRefresh);
+    }
+
+    if (chatOutputAppendOff < chatOutputAppendLen) {
+        streamLogLifecycle("chat scintilla replace append continue");
+        if (app != NULL) {
+            DoMethod(app, MUIM_Application_PushMethod, app, 2, MUIM_CallHook,
+                     &ChatOutputSciAppendContinueHook);
+        } else {
+            chatOutputScintillaCancelDeferredAppend();
+            chatOutputScintillaReplaceBusy = FALSE;
+        }
+        return;
+    }
+
+    {
+        char *utf8 = chatOutputAppendUtf8;
+        UBYTE *styles = chatOutputAppendStyles;
+        ULONG textLen = chatOutputAppendLen;
+        ULONG styleLen = chatOutputAppendStyleLen;
+        BOOL preserve = chatOutputAppendPreserveViewport;
+        sptr_t firstVis = chatOutputAppendFirstVisible;
+        sptr_t oldLines = chatOutputAppendOldLineCount;
+
+        chatOutputAppendUtf8 = NULL;
+        chatOutputAppendStyles = NULL;
+        chatOutputAppendSci = NULL;
+        chatOutputAppendLen = 0;
+        chatOutputAppendOff = 0;
+        chatOutputAppendStyleLen = 0;
+        chatOutputScintillaMorphosSkipViewport = chatOutputAppendSkipViewport;
+        chatOutputAppendSkipViewport = FALSE;
+
+        streamLogLifecycle("chat scintilla replace append done");
+        chatOutputScintillaReplaceBusy = FALSE;
+        chatOutputScintillaFinishReplaceAfterAppend(sci, utf8, styles, styleLen,
+                                                    textLen, preserve, firstVis,
+                                                    oldLines);
+        FreeVec(utf8);
+        if (styles != NULL) {
+            FreeVec(styles);
+        }
+    }
+}
+MakeHook(ChatOutputSciAppendContinueHook, ChatOutputSciAppendContinueFunc);
 
 void chatOutputScintillaSetUtf8TextWithRoleStyles(Object *sci, const char *utf8,
                                                 const UBYTE *roleStyles,
@@ -2841,7 +3001,9 @@ void chatOutputScintillaSetUtf8TextWithRoleStyles(Object *sci, const char *utf8,
      * CLEARALL/SETTEXT freeze MorphOS on large styled chats (conversation
      * switch). Swap to a fresh document, then APPENDTEXT the new body in
      * small chunks with wrap disabled (full APPENDTEXT hard-freezes OS).
+     * Large bodies continue via PushMethod so NewInput can run between batches.
      */
+    chatOutputScintillaCancelDeferredAppend();
     chatOutputScintillaReplaceBusy = TRUE;
     chatOutputScintillaCancelDeferredStyles();
     if (!chatOutputScintillaSwapToEmptyDocument(sci)) {
@@ -2851,64 +3013,71 @@ void chatOutputScintillaSetUtf8TextWithRoleStyles(Object *sci, const char *utf8,
     }
     codeBlocksScintillaCommand(sci, SCI_SETREADONLY, 0, 0);
     codeBlocksScintillaCommand(sci, SCI_SETWRAPMODE, SC_WRAP_NONE, 0);
-    if (textLen > 0) {
-        streamLogLifecycle("chat scintilla replace append begin");
+    if (textLen == 0) {
+        streamLogLifecycle("chat scintilla replace empty");
+        chatOutputScintillaReplaceBusy = FALSE;
+        chatOutputScintillaFinishReplaceAfterAppend(sci, utf8, roleStyles,
+                                                    roleStyleLen, 0,
+                                                    preserveViewport,
+                                                    firstVisibleLine,
+                                                    oldLineCount);
+        return;
+    }
+
+    {
+        UBYTE lenMsg[64];
+
+        snprintf(lenMsg, sizeof(lenMsg),
+                 "chat scintilla replace append begin len=%lu",
+                 (unsigned long)textLen);
+        streamLogLifecycle(lenMsg);
+    }
+    if (textLen <= CHAT_OUTPUT_APPEND_SYNC_MAX || app == NULL) {
         chatOutputScintillaAppendTextChunked(sci, utf8, textLen);
         streamLogLifecycle("chat scintilla replace append done");
-    } else {
-        streamLogLifecycle("chat scintilla replace empty");
+        chatOutputScintillaReplaceBusy = FALSE;
+        chatOutputScintillaFinishReplaceAfterAppend(
+            sci, utf8, roleStyles, roleStyleLen, textLen, preserveViewport,
+            firstVisibleLine, oldLineCount);
+        return;
     }
-    chatOutputScintillaReplaceBusy = FALSE;
-    chatOutputScintillaApplyLineWrap(sci);
-    chatOutputStreamSyncedUtf8Len = textLen;
-    if (roleStyles != NULL && roleStyleLen > 0) {
-        if (roleStyleLen > textLen) {
-            roleStyleLen = textLen;
-        }
-        chatOutputScintillaCancelDeferredStyles();
-        if (app != NULL && chatOutputDeferredRoleStyles == NULL) {
-            chatOutputDeferredRoleStyles =
-                (UBYTE *)AllocVec(roleStyleLen, MEMF_ANY);
-            if (chatOutputDeferredRoleStyles != NULL) {
-                memcpy(chatOutputDeferredRoleStyles, roleStyles, roleStyleLen);
-                chatOutputDeferredRoleStyleLen = roleStyleLen;
-                chatOutputDeferredPreserveViewport = preserveViewport;
-                chatOutputDeferredFirstVisibleLine = firstVisibleLine;
-                chatOutputDeferredOldLineCount = oldLineCount;
-                chatOutputDeferredSci = sci;
-                streamLogLifecycle("chat scintilla apply styles defer scheduled");
-                DoMethod(app, MUIM_Application_PushMethod, app, 2, MUIM_CallHook,
-                         &ChatOutputSciApplyStylesDeferredHook);
-                return;
-            }
-        }
-        streamLogLifecycle("chat scintilla apply styles begin");
-        chatOutputScintillaApplyRoleStyleBytes(sci, roleStyles, roleStyleLen);
-        streamLogLifecycle("chat scintilla apply styles done");
-    } else if (textLen > 0) {
-        UBYTE *styleBuf = (UBYTE *)AllocVec(textLen, MEMF_ANY);
 
-        streamLogLifecycle("chat scintilla apply styles begin");
-        if (styleBuf != NULL) {
-            memset(styleBuf, CHAT_OUTPUT_STYLE_ASSISTANT, textLen);
-            chatOutputScintillaAugmentStyleBytesHotspots(utf8, styleBuf, textLen);
-            chatOutputScintillaApplyRoleStyleBytes(sci, styleBuf, textLen);
-            FreeVec(styleBuf);
+    chatOutputAppendUtf8 = (char *)AllocVec(textLen + 1, MEMF_ANY);
+    if (chatOutputAppendUtf8 == NULL) {
+        /* OOM: still chunk+CheckRefresh -- never one tight APPENDTEXT storm. */
+        streamLogLifecycle("chat scintilla replace append oom sync fallback");
+        chatOutputScintillaAppendTextChunked(sci, utf8, textLen);
+        streamLogLifecycle("chat scintilla replace append done");
+        chatOutputScintillaReplaceBusy = FALSE;
+        chatOutputScintillaFinishReplaceAfterAppend(
+            sci, utf8, roleStyles, roleStyleLen, textLen, preserveViewport,
+            firstVisibleLine, oldLineCount);
+        return;
+    }
+    memcpy(chatOutputAppendUtf8, utf8, textLen + 1);
+    chatOutputAppendStyles = NULL;
+    chatOutputAppendStyleLen = 0;
+    if (roleStyles != NULL && roleStyleLen > 0) {
+        ULONG sl = roleStyleLen;
+        if (sl > textLen) {
+            sl = textLen;
         }
-        streamLogLifecycle("chat scintilla apply styles done");
+        chatOutputAppendStyles = (UBYTE *)AllocVec(sl, MEMF_ANY);
+        if (chatOutputAppendStyles != NULL) {
+            memcpy(chatOutputAppendStyles, roleStyles, sl);
+            chatOutputAppendStyleLen = sl;
+        }
     }
-    codeBlocksScintillaCommand(sci, SCI_SETREADONLY, 1, 0);
-    /*
-     * GOTOPOS/SCROLLCARET on large styled docs can hang; skip scroll-to-end for heavy docs
-     * and for NList chat switches (list refresh sets chatOutputScintillaMorphosSkipViewport).
-     */
-    if (!chatOutputScintillaMorphosSkipViewport &&
-        (preserveViewport || textLen <= (24 * 1024))) {
-        streamLogLifecycle("chat scintilla viewport begin");
-        chatOutputScintillaFinishViewport(sci, firstVisibleLine, oldLineCount,
-                                          preserveViewport);
-        streamLogLifecycle("chat scintilla viewport done");
-    }
+    chatOutputAppendSci = sci;
+    chatOutputAppendLen = textLen;
+    chatOutputAppendOff = 0;
+    chatOutputAppendPreserveViewport = preserveViewport;
+    chatOutputAppendFirstVisible = firstVisibleLine;
+    chatOutputAppendOldLineCount = oldLineCount;
+    chatOutputAppendSkipViewport = chatOutputScintillaMorphosSkipViewport;
+    streamLogLifecycle("chat scintilla replace append deferred");
+    DoMethod(app, MUIM_Application_PushMethod, app, 2, MUIM_CallHook,
+             &ChatOutputSciAppendContinueHook);
 }
 
 #endif /* __MORPHOS__ */
