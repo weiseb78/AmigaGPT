@@ -195,7 +195,7 @@
 #define MUIA_AmigaGPTConfig_ChatFontSize (AmigaGPTConfig_Dummy + 0x8B)
 #define MUIA_AmigaGPTConfig_ChatLineWrap (AmigaGPTConfig_Dummy + 0x8C)
 #define MUIA_AmigaGPTConfig_DebugStreamLog (AmigaGPTConfig_Dummy + 0x8D)
-#define MUIA_AmigaGPTConfig_DebugLifecycleLog (AmigaGPTConfig_Dummy + 0x8E)
+#define MUIA_AmigaGPTConfig_DebugLifecycleLog (AmigaGPTConfig_Dummy + 0x97)
 #define MUIA_AmigaGPTConfig_MainWindowLeft (AmigaGPTConfig_Dummy + 0x8F)
 #define MUIA_AmigaGPTConfig_MainWindowTop (AmigaGPTConfig_Dummy + 0x90)
 #define MUIA_AmigaGPTConfig_MainWindowWidth (AmigaGPTConfig_Dummy + 0x91)

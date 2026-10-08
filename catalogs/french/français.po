@@ -2263,9 +2263,6 @@ msgctxt "STRING_WAITING_FOR_MORE_DATA (428//)"
 msgid "Waiting for more response data..."
 msgstr "Waiting for more response data..."
 
-#~ msgctxt "STRING_CLEAR_ATTACHMENTS (405//)"
-#~ msgid "Clear"
-#~ msgstr "Clear"
 
 #: src/MainWindow.c
 msgctxt "STRING_EDIT_IMAGE (429//)"
