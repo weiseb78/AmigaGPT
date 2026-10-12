@@ -20,6 +20,7 @@
 #include <sys/time.h>
 #include <time.h>
 #include "AmigaGPTConfig.h"
+#include "AmigaGPTTextEditor.h"
 #include "streamlog.h"
 #include "gui.h"
 #include "menu.h"
@@ -975,20 +976,21 @@ static void setSpeechGenerationControlsDisabled(BOOL disabled) {
 }
 
 static void setChatControlsDisabled(BOOL disabled) {
+    /* Match pre-upstream MorphOS fork: never MUIA_Disabled on the chat list or
+     * prompt editor here. Upstream did; ObjectID + Application_Load then
+     * restored a hatched/"disabled" look at startup. Chat send still gates
+     * via send/new/delete buttons + chatSendInProgress; MorphOS list gating
+     * stays in setConversationListInputEnabled(). */
     if (newChatButton != NULL)
         set(newChatButton, MUIA_Disabled, disabled);
     if (deleteChatButton != NULL)
         set(deleteChatButton, MUIA_Disabled, disabled);
-    if (chatInputTextEditor != NULL)
-        set(chatInputTextEditor, MUIA_Disabled, disabled);
     if (attachFilesButton != NULL)
         set(attachFilesButton, MUIA_Disabled, disabled);
     if (clearAttachmentsButton != NULL)
         set(clearAttachmentsButton, MUIA_Disabled,
             disabled || !pendingChatFilesInitialized ||
                 chatFileCount(&pendingChatFiles) == 0);
-    if (conversationListObject != NULL)
-        set(conversationListObject, MUIA_Disabled, disabled);
 }
 
 static void setRequestInterfaceBusy(BOOL busy) {
@@ -3281,14 +3283,42 @@ static BOOL ensureChatOutputBufferCapacity(ULONG required) {
 
 static Object *createPromptInputEditor(struct Hook *submitHook, ULONG objectId,
                                        ULONG weight) {
+    /* TextFrame + MUII_BACKGROUND: solid editor look (upstream dropped both).
+     * Prefer private AmigaGPTTextEditor: Shift+Return (L+R) inserts newline.
+     * ActionTextEditor.mcc only remaps IEQUALIFIER_RSHIFT ? Left Shift+Return
+     * fails there. Fall back to MCC, then stock TextEditor. */
     // clang-format off
+    if (!isAROS && amigaGPTTextEditorClass != NULL) {
+        Object *editor = NewObject(
+            MUIC_AmigaGPTTextEditor, NULL,
+            TextFrame,
+            MUIA_Background, MUII_BACKGROUND,
+            MUIA_CycleChain, TRUE,
+            objectId != 0 ? MUIA_ObjectID : TAG_IGNORE, objectId,
+            weight != 0 ? MUIA_Weight : TAG_IGNORE, weight,
+            MUIA_AmigaGPTTextEditor_SubmitHook, submitHook,
+            isAROS ? TAG_DONE : TAG_SKIP, NULL,
+#ifndef __MORPHOS__
+            MUIA_TextEditor_FixedFont, configGetFixedWidthFonts(),
+#endif
+            MUIA_TextEditor_ReadOnly, FALSE,
+            MUIA_TextEditor_TabSize, 4,
+            MUIA_TextEditor_Rows, 3,
+            MUIA_TextEditor_ExportHook, MUIV_TextEditor_ExportHook_EMail,
+            TAG_DONE);
+        if (editor != NULL)
+            return editor;
+    }
     if (!isAROS) {
         Object *editor = MUI_NewObject(
             MUIC_ActionTextEditor,
+            TextFrame,
+            MUIA_Background, MUII_BACKGROUND,
             MUIA_CycleChain, TRUE,
             objectId != 0 ? MUIA_ObjectID : TAG_IGNORE, objectId,
             weight != 0 ? MUIA_Weight : TAG_IGNORE, weight,
             MUIA_ActionTextEditor_SubmitHook, submitHook,
+            isAROS ? TAG_DONE : TAG_SKIP, NULL,
 #ifndef __MORPHOS__
             MUIA_TextEditor_FixedFont, configGetFixedWidthFonts(),
 #endif
@@ -3302,7 +3332,8 @@ static Object *createPromptInputEditor(struct Hook *submitHook, ULONG objectId,
     }
     return MUI_NewObject(
         isAROS ? MUIC_BetterString : MUIC_TextEditor,
-        isAROS ? MUIA_Background : TAG_IGNORE, MUII_BACKGROUND,
+        TextFrame,
+        MUIA_Background, MUII_BACKGROUND,
         MUIA_CycleChain, TRUE,
         objectId != 0 ? MUIA_ObjectID : TAG_IGNORE, objectId,
         weight != 0 ? MUIA_Weight : TAG_IGNORE, weight,
@@ -3785,6 +3816,9 @@ LONG createMainWindow() {
         streamLogLifecycle("createMainWindow chat find init failed");
     }
 #endif
+    if ((isMUI5 || isMUI39) && createAmigaGPTTextEditor() == RETURN_ERROR) {
+        displayError("Could not create custom class.");
+    }
     if (mainWindowObject != NULL) {
 #ifdef __MORPHOS__
         chatOutputScintillaDetachNotify();
@@ -4231,7 +4265,7 @@ LONG createMainWindow() {
     updateReferenceImageControls();
     updateResponseFileControl();
     updateSpeechControls();
-    
+
     updateStatusBar(STRING_READY, greenPen);
 
     streamLogBootPhase("loadConversations call");
@@ -5546,7 +5580,94 @@ static void sendChatMessage() {
                         type = json_object_get_string(typeObj);
                     }
                     if (type != NULL &&
-                        strcmp(type, "response.completed") == 0) {
+                        strcmp(type, "response.output_text.done") == 0 &&
+                        chatSettings.apiEndpoint ==
+                            API_CHAT_ENDPOINT_RESPONSES) {
+                        /* Authoritative full segment text; deltas can be a
+                         * short prefix when tools (web_search) intervene. */
+                        struct json_object *doneTextObj =
+                            json_object_object_get(response, "text");
+                        UTF8 *doneText =
+                            doneTextObj != NULL
+                                ? (UTF8 *)json_object_get_string(doneTextObj)
+                                : NULL;
+                        {
+                            ULONG doneLen =
+                                doneText != NULL
+                                    ? (ULONG)strlen((char *)doneText)
+                                    : 0;
+                            ULONG accLen =
+                                (ULONG)strlen((char *)receivedMessage);
+                            if (streamLogIsEnabled()) {
+                                UBYTE detail[160];
+                                snprintf((char *)detail, sizeof(detail),
+                                         "doneMsg=%lu accumulated=%lu "
+                                         "supersede=%u",
+                                         (unsigned long)doneLen,
+                                         (unsigned long)accLen,
+                                         (unsigned)(doneLen > accLen));
+                                streamLogApiError("stream_output_text_done",
+                                                  (CONST_STRPTR)detail);
+                            }
+                            if (doneText != NULL && doneLen > accLen) {
+                                ULONG n = doneLen;
+                                if (n >= READ_BUFFER_LENGTH)
+                                    n = READ_BUFFER_LENGTH - 1;
+                                CopyMem(doneText, receivedMessage, n);
+                                receivedMessage[n] = '\0';
+                                speechUtf8Index = 0;
+                                wordNumber = 0;
+                                utf8stream_free(utf8Stream);
+                                utf8Stream = utf8stream_create(4096);
+                                streamLogLifecycle(
+                                    "stream output_text.done supersedes "
+                                    "deltas");
+                            }
+                        }
+                    } else if (type != NULL &&
+                               strcmp(type, "response.completed") == 0) {
+                        if (chatSettings.apiEndpoint ==
+                            API_CHAT_ENDPOINT_RESPONSES) {
+                            struct json_object *nested =
+                                json_object_object_get(response, "response");
+                            UTF8 *finalText = getMessageContentFromJson(
+                                nested != NULL ? nested : response, FALSE,
+                                FALSE, API_CHAT_ENDPOINT_RESPONSES);
+                            {
+                                ULONG finalLen =
+                                    finalText != NULL
+                                        ? (ULONG)strlen((char *)finalText)
+                                        : 0;
+                                ULONG accLen =
+                                    (ULONG)strlen((char *)receivedMessage);
+                                if (streamLogIsEnabled()) {
+                                    UBYTE detail[160];
+                                    snprintf(
+                                        (char *)detail, sizeof(detail),
+                                        "completedMsg=%lu accumulated=%lu "
+                                        "supersede=%u",
+                                        (unsigned long)finalLen,
+                                        (unsigned long)accLen,
+                                        (unsigned)(finalLen > accLen));
+                                    streamLogApiError("stream_completed",
+                                                      (CONST_STRPTR)detail);
+                                }
+                                if (finalText != NULL && finalLen > accLen) {
+                                    ULONG n = finalLen;
+                                    if (n >= READ_BUFFER_LENGTH)
+                                        n = READ_BUFFER_LENGTH - 1;
+                                    CopyMem(finalText, receivedMessage, n);
+                                    receivedMessage[n] = '\0';
+                                    speechUtf8Index = 0;
+                                    wordNumber = 0;
+                                    utf8stream_free(utf8Stream);
+                                    utf8Stream = utf8stream_create(4096);
+                                    streamLogLifecycle(
+                                        "stream response.completed supersedes "
+                                        "partial deltas");
+                                }
+                            }
+                        }
                         dataStreamFinished = TRUE;
                     } else if (json_object_object_get(response, "choices") !=
                                NULL) {

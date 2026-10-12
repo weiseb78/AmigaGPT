@@ -3,7 +3,8 @@
 
 #include <exec/types.h>
 
-#define STREAMLOG_SSE_SNIPPET_MAX 200
+/* Room for event counters + short content sample on stream-end lines. */
+#define STREAMLOG_SSE_SNIPPET_MAX 280
 
 /*
  * MorphOS: Work:Tmp survives hard reset (T: is RAM and gone after reboot).

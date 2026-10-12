@@ -132,7 +132,27 @@ static BOOL chatStreamCancelRequested = FALSE;
 static BOOL chatStreamCompletedOk = FALSE;
 static BOOL chatStreamTruncated = FALSE;
 static ChatTransportOutcome chatStreamTransport = CHAT_TRANSPORT_UNKNOWN;
+/**
+ * Chat SSE often arrives as HTTP/1.1 Transfer-Encoding: chunked. Without
+ * decoding, a chunk-size line can land inside a JSON string (seen as
+ * "u\\r\\n953\\r\\nngefähr" mid-word). Model-list fetch already decodes;
+ * chat streaming must too. State persists across multi-call SSE reads.
+ */
+static BOOL streamHeadersStripped = FALSE;
+static BOOL streamHttpChunked = FALSE;
+static UBYTE streamChunkLenLine[32];
+static UBYTE streamChunkLenPos = 0;
+static ULONG streamChunkRemaining = 0;
+static UBYTE streamChunkCrlfToSkip = 0;
 static UBYTE openaiLastSseSnippet[STREAMLOG_SSE_SNIPPET_MAX + 1];
+static ULONG sseDeltaEvents;
+static ULONG sseDoneEvents;
+static ULONG sseCompletedEvents;
+static ULONG sseOtherEvents;
+static ULONG sseMaxDeltaLen;
+static ULONG sseMaxDoneLen;
+static ULONG sseCompletedMsgLen;
+static UBYTE sseContentSample[81];
 
 static void chatStreamFinalizeTransport(UWORD responseIndex,
                                         ULONG readBufferLen) {
@@ -145,11 +165,104 @@ static void chatStreamFinalizeTransport(UWORD responseIndex,
     }
 }
 
+static void openAIChatStreamRebuildSseSummary(void) {
+    snprintf((char *)openaiLastSseSnippet, sizeof(openaiLastSseSnippet),
+             "d=%lu/%lu done=%lu/%lu comp=%lu/%lu other=%lu sample=%s",
+             (unsigned long)sseDeltaEvents, (unsigned long)sseMaxDeltaLen,
+             (unsigned long)sseDoneEvents, (unsigned long)sseMaxDoneLen,
+             (unsigned long)sseCompletedEvents,
+             (unsigned long)sseCompletedMsgLen,
+             (unsigned long)sseOtherEvents,
+             sseContentSample[0] != '\0' ? (char *)sseContentSample : "-");
+}
+
+static void openAIChatStreamNoteContentSample(CONST_STRPTR text) {
+    ULONG i;
+    ULONG out = 0;
+
+    if (text == NULL || text[0] == '\0') {
+        return;
+    }
+    for (i = 0; text[i] != '\0' && out + 1 < sizeof(sseContentSample); i++) {
+        UBYTE c = (UBYTE)text[i];
+        if (c == '\r' || c == '\n' || c == '\t') {
+            if (out > 0)
+                sseContentSample[out++] = ' ';
+            continue;
+        }
+        if (c < 32)
+            continue;
+        sseContentSample[out++] = c;
+    }
+    sseContentSample[out] = '\0';
+}
+
+static ULONG openAIChatStreamResponsesMessageTextLen(struct json_object *root) {
+    struct json_object *outputArray;
+    struct json_object *nested;
+    ULONG total = 0;
+    int i;
+    int arrayLength;
+
+    if (root == NULL)
+        return 0;
+    outputArray = json_object_object_get(root, "output");
+    if (outputArray == NULL || !json_object_is_type(outputArray, json_type_array)) {
+        nested = json_object_object_get(root, "response");
+        if (nested != NULL)
+            outputArray = json_object_object_get(nested, "output");
+    }
+    if (outputArray == NULL || !json_object_is_type(outputArray, json_type_array))
+        return 0;
+    arrayLength = json_object_array_length(outputArray);
+    for (i = 0; i < arrayLength; i++) {
+        struct json_object *item = json_object_array_get_idx(outputArray, i);
+        struct json_object *typeObj;
+        struct json_object *contentArray;
+        CONST_STRPTR typeStr;
+        int c;
+        int cLen;
+
+        if (item == NULL)
+            continue;
+        typeObj = json_object_object_get(item, "type");
+        typeStr = typeObj != NULL ? json_object_get_string(typeObj) : NULL;
+        if (typeStr == NULL || strcmp(typeStr, "message") != 0)
+            continue;
+        contentArray = json_object_object_get(item, "content");
+        if (contentArray == NULL ||
+            !json_object_is_type(contentArray, json_type_array))
+            continue;
+        cLen = json_object_array_length(contentArray);
+        for (c = 0; c < cLen; c++) {
+            struct json_object *part = json_object_array_get_idx(contentArray, c);
+            struct json_object *t;
+            CONST_STRPTR s;
+
+            if (part == NULL)
+                continue;
+            t = json_object_object_get(part, "text");
+            s = t != NULL ? json_object_get_string(t) : NULL;
+            if (s != NULL)
+                total += (ULONG)strlen(s);
+        }
+    }
+    return total;
+}
+
 void openAIChatStreamResetOutcome(void) {
     chatStreamCompletedOk = FALSE;
     chatStreamTruncated = FALSE;
     chatStreamTransport = CHAT_TRANSPORT_UNKNOWN;
     openaiLastSseSnippet[0] = '\0';
+    sseDeltaEvents = 0;
+    sseDoneEvents = 0;
+    sseCompletedEvents = 0;
+    sseOtherEvents = 0;
+    sseMaxDeltaLen = 0;
+    sseMaxDoneLen = 0;
+    sseCompletedMsgLen = 0;
+    sseContentSample[0] = '\0';
 }
 
 ChatTransportOutcome openAIChatStreamTransportOutcome(void) {
@@ -157,31 +270,95 @@ ChatTransportOutcome openAIChatStreamTransportOutcome(void) {
 }
 
 CONST_STRPTR openAIChatStreamLastSseSnippet(void) {
+    if (openaiLastSseSnippet[0] == '\0') {
+        openAIChatStreamRebuildSseSummary();
+    }
     return (CONST_STRPTR)openaiLastSseSnippet;
 }
 
 void openAIChatStreamCaptureLastSse(CONST_STRPTR fromBuffer) {
-    ULONG i;
-    ULONG out = 0;
+    struct json_object *parsed;
+    struct json_object *typeObj;
+    CONST_STRPTR typeStr;
 
-    openaiLastSseSnippet[0] = '\0';
-    if (fromBuffer == NULL) {
+    if (fromBuffer == NULL || fromBuffer[0] == '\0') {
+        openAIChatStreamRebuildSseSummary();
         return;
     }
-    for (i = 0; fromBuffer[i] != '\0' && out < STREAMLOG_SSE_SNIPPET_MAX; i++) {
-        UBYTE c = (UBYTE)fromBuffer[i];
-        if (c == '\r' || c == '\n' || c == '\t') {
-            if (out > 0 && out < STREAMLOG_SSE_SNIPPET_MAX) {
-                openaiLastSseSnippet[out++] = '|';
-            }
-            continue;
-        }
-        if (c < 32) {
-            continue;
-        }
-        openaiLastSseSnippet[out++] = c;
+
+    parsed = json_tokener_parse((char *)fromBuffer);
+    if (parsed == NULL) {
+        sseOtherEvents++;
+        openAIChatStreamRebuildSseSummary();
+        return;
     }
-    openaiLastSseSnippet[out] = '\0';
+
+    typeObj = json_object_object_get(parsed, "type");
+    typeStr = typeObj != NULL ? json_object_get_string(typeObj) : NULL;
+    if (typeStr != NULL &&
+        strcmp(typeStr, "response.output_text.delta") == 0) {
+        struct json_object *delta = json_object_object_get(parsed, "delta");
+        CONST_STRPTR text = delta != NULL ? json_object_get_string(delta) : NULL;
+        ULONG len = text != NULL ? (ULONG)strlen(text) : 0;
+
+        sseDeltaEvents++;
+        if (len > sseMaxDeltaLen)
+            sseMaxDeltaLen = len;
+        if (text != NULL)
+            openAIChatStreamNoteContentSample(text);
+    } else if (typeStr != NULL &&
+               strcmp(typeStr, "response.output_text.done") == 0) {
+        struct json_object *textObj = json_object_object_get(parsed, "text");
+        CONST_STRPTR text =
+            textObj != NULL ? json_object_get_string(textObj) : NULL;
+        ULONG len = text != NULL ? (ULONG)strlen(text) : 0;
+
+        sseDoneEvents++;
+        if (len > sseMaxDoneLen)
+            sseMaxDoneLen = len;
+        if (text != NULL)
+            openAIChatStreamNoteContentSample(text);
+    } else if (typeStr != NULL && strcmp(typeStr, "response.completed") == 0) {
+        ULONG msgLen = openAIChatStreamResponsesMessageTextLen(parsed);
+
+        sseCompletedEvents++;
+        if (msgLen > sseCompletedMsgLen)
+            sseCompletedMsgLen = msgLen;
+    } else if (json_object_object_get(parsed, "choices") != NULL) {
+        struct json_object *choices = json_object_object_get(parsed, "choices");
+        struct json_object *choice0;
+        struct json_object *delta;
+        struct json_object *content;
+        CONST_STRPTR text = NULL;
+        ULONG len = 0;
+
+        if (choices != NULL && json_object_is_type(choices, json_type_array) &&
+            json_object_array_length(choices) > 0) {
+            choice0 = json_object_array_get_idx(choices, 0);
+            if (choice0 != NULL) {
+                delta = json_object_object_get(choice0, "delta");
+                if (delta != NULL) {
+                    content = json_object_object_get(delta, "content");
+                    text = content != NULL ? json_object_get_string(content)
+                                          : NULL;
+                }
+            }
+        }
+        len = text != NULL ? (ULONG)strlen(text) : 0;
+        if (text != NULL && text[0] != '\0') {
+            sseDeltaEvents++;
+            if (len > sseMaxDeltaLen)
+                sseMaxDeltaLen = len;
+            openAIChatStreamNoteContentSample(text);
+        } else {
+            sseOtherEvents++;
+        }
+    } else {
+        sseOtherEvents++;
+    }
+
+    json_object_put(parsed);
+    openAIChatStreamRebuildSseSummary();
 }
 
 static void chatStreamNoteReadTimeout(UWORD responseIndex,
@@ -269,6 +446,8 @@ static LONG reconnectAndResendChatRequest(
 static void flushSslWrites(BOOL useSSL);
 static void flushTransportWrites(BOOL useSSL);
 static LONG waitForSocketReadable(BOOL useSSL);
+static LONG waitForSocketReadableBudget(BOOL useSSL, ULONG maxSlices,
+                                        BOOL zeroOnTimeout);
 static LONG waitForSocketWritable(void);
 static LONG sslConnectWithMuiPump(SSL *s);
 static BOOL socketOperationWouldBlock(void);
@@ -727,6 +906,15 @@ static STRPTR combineInstructionText(CONST_STRPTR first, CONST_STRPTR second) {
     return out;
 }
 
+static void resetStreamHttpTransferState(void) {
+    streamHeadersStripped = FALSE;
+    streamHttpChunked = FALSE;
+    streamChunkLenPos = 0;
+    streamChunkRemaining = 0;
+    streamChunkCrlfToSkip = 0;
+    streamChunkLenLine[0] = '\0';
+}
+
 static void closeActiveResponseConnection(void) {
     /* Hard-close: never block on SSL_shutdown (can hang the next chat connect
      * after a failed or aborted network TTS request on the shared socket). */
@@ -738,6 +926,7 @@ static void closeActiveResponseConnection(void) {
         SSL_free(ssl);
         ssl = NULL;
     }
+    resetStreamHttpTransferState();
 }
 
 static APTR ttsFail(APTR audioData) {
@@ -1926,29 +2115,68 @@ static void setSocketNonBlocking(LONG s) {
     IoctlSocket(s, FIONBIO, (char *)&nonblock);
 }
 
-static LONG waitForSocketReadable(BOOL useSSL) {
+/**
+ * MorphOS: no WaitSelect on TLS (timeouts ignored / hard-freeze risk).
+ * Poll FIONREAD + MSG_PEEK.
+ * @param maxSlices  Delay(1) iterations (~50 ≈ 1 s)
+ * @param zeroOnTimeout  TRUE → return 0 (SSE idle accounting); FALSE → -1
+ *                       (SSL handshake must not re-enter without bytes)
+ */
+static LONG waitForSocketReadableBudget(BOOL useSSL, ULONG maxSlices,
+                                        BOOL zeroOnTimeout) {
     if (useSSL && ssl != NULL && SSL_pending(ssl) > 0)
         return 1;
     if (sock < 0)
         return -1;
 
 #ifdef __MORPHOS__
-    /* MorphOS netstack has been seen to ignore WaitSelect timeouts on TLS
-     * sockets, which freezes the GUI on "Connecting..." until the peer
-     * closes. Poll instead and let non-blocking SSL_read return WANT_READ. */
-    Delay(2);
-    return 1;
+    {
+        ULONG slices;
+
+        if (maxSlices == 0)
+            maxSlices = 1;
+        for (slices = 0; slices < maxSlices; slices++) {
+            LONG nread = 0;
+            UBYTE peekByte = 0;
+            LONG peeked;
+
+            if (IoctlSocket(sock, FIONREAD, (char *)&nread) >= 0 &&
+                nread > 0) {
+                return 1;
+            }
+
+            peeked = recv(sock, &peekByte, 1, MSG_PEEK);
+            if (peeked > 0)
+                return 1;
+            if (peeked == 0) {
+                streamLogApiError("socket_wait", "readable peer closed");
+                return -1;
+            }
+
+#ifndef DAEMON
+            if (openaiPumpMUIForNetwork(TRUE))
+                return -1;
+#endif
+            Delay(1);
+        }
+        return zeroOnTimeout ? 0 : -1;
+    }
 #else
     {
         fd_set readfds;
         struct timeval tv;
         LONG n;
         ULONG extraSignals = 0;
+        ULONG sec =
+            (maxSlices + 49UL) / 50UL; /* ~50 ticks ≈ 1 s on Amiga */
 
+        (void)zeroOnTimeout;
+        if (sec == 0)
+            sec = SOCKET_READ_WAIT_SECONDS;
         memset(&readfds, 0, sizeof(readfds));
         FD_ZERO(&readfds);
         FD_SET(sock, &readfds);
-        tv.tv_sec = SOCKET_READ_WAIT_SECONDS;
+        tv.tv_sec = (long)sec;
         tv.tv_usec = 0;
         n = WaitSelect(sock + 1, &readfds, NULL, NULL, &tv, &extraSignals);
         return n;
@@ -1956,12 +2184,28 @@ static LONG waitForSocketReadable(BOOL useSSL) {
 #endif
 }
 
+/* Default: ~1 s poll, 0 on timeout — used by SSE body reads / idle timer. */
+static LONG waitForSocketReadable(BOOL useSSL) {
+    return waitForSocketReadableBudget(useSSL, 50UL, TRUE);
+}
+
 static LONG waitForSocketWritable(void) {
     if (sock < 0)
         return -1;
 #ifdef __MORPHOS__
-    Delay(2);
-    return 1;
+    /* Same as readable: avoid WaitSelect on MorphOS; brief Delay + MUI. */
+    {
+        ULONG slices;
+
+        for (slices = 0; slices < 50; slices++) {
+#ifndef DAEMON
+            if (openaiPumpMUIForNetwork(TRUE))
+                return -1;
+#endif
+            Delay(1);
+        }
+        return 1;
+    }
 #else
     {
         fd_set writefds;
@@ -2148,6 +2392,14 @@ static LONG sslConnectWithMuiPump(SSL *s) {
         int err;
         UBYTE detail[96];
 
+#ifndef DAEMON
+        /* Pump before SSL_connect so Verbinden... stays responsive. */
+        if (openaiPumpMUIForNetwork(TRUE)) {
+            streamLogApiError("ssl_connect", "aborted");
+            return -2;
+        }
+#endif
+
         snprintf((STRPTR)detail, sizeof(detail), "pre_connect step=%lu t=%lu",
                  (unsigned long)step, (unsigned long)elapsedSec);
         streamLogApiError("ssl_connect", (STRPTR)detail);
@@ -2179,17 +2431,22 @@ static LONG sslConnectWithMuiPump(SSL *s) {
 #endif
 
         if (err == SSL_ERROR_WANT_READ) {
-            LONG wr = waitForSocketReadable(FALSE);
-            snprintf((STRPTR)detail, sizeof(detail), "want_read WaitSelect=%ld",
+            /* MorphOS: only re-enter SSL_connect once peer bytes are visible.
+             * Use the full handshake budget; do not return 0 (that would
+             * re-enter SSL_connect early and hard-freeze). */
+            LONG wr = waitForSocketReadableBudget(
+                TRUE, (ULONG)SSL_HANDSHAKE_MAX_SECONDS * 50UL, FALSE);
+            snprintf((STRPTR)detail, sizeof(detail), "want_read ready=%ld",
                      (long)wr);
             streamLogApiError("ssl_connect", (STRPTR)detail);
-            if (wr < 0) {
+            if (wr <= 0) {
                 streamLogApiError("ssl_connect", "want_read wait failed");
                 return ret;
             }
         } else if (err == SSL_ERROR_WANT_WRITE) {
+            flushSslWrites(TRUE);
             LONG wr = waitForSocketWritable();
-            snprintf((STRPTR)detail, sizeof(detail), "want_write WaitSelect=%ld",
+            snprintf((STRPTR)detail, sizeof(detail), "want_write ready=%ld",
                      (long)wr);
             streamLogApiError("ssl_connect", (STRPTR)detail);
             if (wr < 0) {
@@ -2204,6 +2461,7 @@ static LONG sslConnectWithMuiPump(SSL *s) {
         }
 
         step++;
+        /* Approximate wall time: readable wait already burns up to 1s/slices. */
         elapsedSec++;
         if (elapsedSec >= SSL_HANDSHAKE_MAX_SECONDS) {
             streamLogApiError("ssl_connect", "handshake timeout");
@@ -2304,6 +2562,101 @@ static BOOL openAIConnectShouldAbort(OpenAIConnectResult result) {
 static void clearHttpReadBuffer(void) {
     if (readBuffer != NULL)
         memset(readBuffer, 0, READ_BUFFER_LENGTH);
+    resetStreamHttpTransferState();
+}
+
+/** Append decoded payload bytes to readBuffer (NUL-terminated). */
+static void streamAppendDecodedBytes(const UBYTE *src, ULONG len) {
+    ULONG rbLen;
+    ULONG space;
+    ULONG take;
+
+    if (readBuffer == NULL || src == NULL || len == 0)
+        return;
+    rbLen = strlen((STRPTR)readBuffer);
+    space = (READ_BUFFER_LENGTH > rbLen + 1) ? (READ_BUFFER_LENGTH - 1 - rbLen)
+                                             : 0;
+    take = (len < space) ? len : space;
+    if (take == 0)
+        return;
+    CopyMem((APTR)src, readBuffer + rbLen, take);
+    readBuffer[rbLen + take] = '\0';
+}
+
+/**
+ * Decode HTTP chunked body bytes into readBuffer. Same state machine as the
+ * model-list fetch path; keeps streamChunk* across SSL_read calls.
+ */
+static void streamFeedChunkedBody(const UBYTE *data, ULONG len) {
+    const UBYTE *p = data;
+    ULONG n = len;
+
+    while (n > 0) {
+        if (streamChunkCrlfToSkip > 0) {
+            streamChunkCrlfToSkip--;
+            p++;
+            n--;
+            continue;
+        }
+
+        if (streamChunkRemaining == 0) {
+            UBYTE c = *p++;
+            n--;
+            if (c == '\n') {
+                streamChunkLenLine[streamChunkLenPos] = '\0';
+                for (UBYTE i = 0; i < streamChunkLenPos; i++) {
+                    if (streamChunkLenLine[i] == '\r' ||
+                        streamChunkLenLine[i] == ';') {
+                        streamChunkLenLine[i] = '\0';
+                        break;
+                    }
+                }
+                streamChunkRemaining =
+                    (ULONG)strtoul((char *)streamChunkLenLine, NULL, 16);
+                streamChunkLenPos = 0;
+                if (streamChunkRemaining == 0) {
+                    /* Final chunk — ignore any trailer bytes. */
+                    n = 0;
+                }
+            } else if (streamChunkLenPos < sizeof(streamChunkLenLine) - 1) {
+                streamChunkLenLine[streamChunkLenPos++] = c;
+            }
+            continue;
+        }
+
+        {
+            ULONG take =
+                (n < streamChunkRemaining) ? n : streamChunkRemaining;
+            streamAppendDecodedBytes(p, take);
+            p += take;
+            n -= take;
+            streamChunkRemaining -= take;
+            if (streamChunkRemaining == 0)
+                streamChunkCrlfToSkip = 2;
+        }
+    }
+}
+
+/** Re-decode readBuffer when it still holds chunk framing after header strip. */
+static void streamDecodeChunkedBufferInPlace(void) {
+    ULONG rawLen;
+    UBYTE *raw;
+
+    if (readBuffer == NULL)
+        return;
+    rawLen = strlen((STRPTR)readBuffer);
+    if (rawLen == 0)
+        return;
+    raw = AllocVec(rawLen + 1, MEMF_ANY);
+    if (raw == NULL)
+        return;
+    CopyMem(readBuffer, raw, rawLen + 1);
+    readBuffer[0] = '\0';
+    streamChunkLenPos = 0;
+    streamChunkRemaining = 0;
+    streamChunkCrlfToSkip = 0;
+    streamFeedChunkedBody(raw, rawLen);
+    FreeVec(raw);
 }
 
 static LONG writeAllQuiet(BOOL useSSL, CONST_STRPTR data, ULONG length) {
@@ -3972,6 +4325,15 @@ static ULONG createSSLConnection(CONST_STRPTR host, UWORD port, BOOL useSSL,
 
 #ifdef __MORPHOS__
     setSocketNonBlocking(sock);
+    /* Safety net if FIONBIO is ignored: blocking SSL_connect must not sit on
+     * the default 180s SO_RCVTIMEO (looks like a hard freeze at Verbinden...). */
+    {
+        struct timeval hsTo;
+        hsTo.tv_sec = 5;
+        hsTo.tv_usec = 0;
+        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &hsTo, sizeof(hsTo));
+        setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &hsTo, sizeof(hsTo));
+    }
 #endif
 
     if (useSSL) {
@@ -3991,9 +4353,16 @@ static ULONG createSSLConnection(CONST_STRPTR host, UWORD port, BOOL useSSL,
         ssl_err = sslConnectWithMuiPump(ssl);
 
         if (ssl_err == 1) {
-            /* Handshake successful. */
-            // printf("SSL connection to %s using %s\n", host,
-            // SSL_get_cipher(ssl));
+            /* Restore long timeouts for the streaming body. */
+            {
+                struct timeval timeout;
+                timeout.tv_sec = 180;
+                timeout.tv_usec = 0;
+                setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+                           sizeof(timeout));
+                setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout,
+                           sizeof(timeout));
+            }
         } else if (ssl_err == -2) {
             /* User quit/cancel during handshake. */
             closeActiveResponseConnection();
@@ -5382,7 +5751,11 @@ struct json_object **postChatMessageToOpenAI(
                 idleWaitSeconds = 0;
                 lastReadProgress = clock();
                 tempReadBuffer[bytesRead] = '\0';
-                strncat(readBuffer, tempReadBuffer, bytesRead);
+                if (streamHeadersStripped && streamHttpChunked) {
+                    streamFeedChunkedBody(tempReadBuffer, (ULONG)bytesRead);
+                } else {
+                    strncat(readBuffer, (STRPTR)tempReadBuffer, bytesRead);
+                }
                 updateStatusBar(STRING_DOWNLOADING_RESPONSE, yellowPen);
             }
             if (socketWaitFailed) {
@@ -5502,8 +5875,27 @@ struct json_object **postChatMessageToOpenAI(
                         if (headerEnd != NULL) {
                             STRPTR afterHeaders =
                                 headerEnd + ((headerEnd[0] == '\r') ? 4 : 2);
+                            /* Detect chunked before discarding headers. */
+                            if (!streamHeadersStripped) {
+                                streamHttpChunked =
+                                    (strstr(readBuffer,
+                                            "Transfer-Encoding: chunked") !=
+                                         NULL ||
+                                     strstr(readBuffer,
+                                            "transfer-encoding: chunked") !=
+                                         NULL);
+                                if (streamHttpChunked)
+                                    streamLogApiError(
+                                        "stream_http",
+                                        "Transfer-Encoding: chunked");
+                            }
                             memmove(readBuffer, afterHeaders,
                                     strlen(afterHeaders) + 1);
+                            streamHeadersStripped = TRUE;
+                            if (streamHttpChunked) {
+                                /* Body still has chunk size lines — decode. */
+                                streamDecodeChunkedBufferInPlace();
+                            }
                         }
                     }
 
@@ -5577,11 +5969,11 @@ struct json_object **postChatMessageToOpenAI(
                                 oneJson[payloadLen] = '\0';
                                 struct json_object *parsedResponse =
                                     json_tokener_parse(oneJson);
-                                FreeVec(oneJson);
                                 if (parsedResponse != NULL) {
+                                    /* Capture before FreeVec (was UAF). */
+                                    openAIChatStreamCaptureLastSse(oneJson);
                                     responses[responseIndex++] = parsedResponse;
                                     streamSawAnyContent = TRUE;
-                                    openAIChatStreamCaptureLastSse(oneJson);
                                     if (responseMarksStreamFinished(
                                             parsedResponse)) {
                                         chatStreamCompletedOk = TRUE;
@@ -5593,8 +5985,10 @@ struct json_object **postChatMessageToOpenAI(
                                     memmove(readBuffer, afterEvent,
                                             strlen(afterEvent) + 1);
                                     doneReading = TRUE;
+                                    FreeVec(oneJson);
                                     break;
                                 }
+                                FreeVec(oneJson);
                             }
                         }
 
