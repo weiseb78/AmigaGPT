@@ -458,14 +458,6 @@ HOOKPROTONHNONP(MarkdownRefreshFunc, void) {
 }
 MakeHook(MarkdownRefreshHook, MarkdownRefreshFunc);
 
-HOOKPROTONHNONP(MarkdownFormattingMenuItemClickedFunc, void) {
-    configSetMarkdownFormatting(!configGetMarkdownFormatting());
-    DoMethod(app, MUIM_Application_PushMethod, app, 2, MUIM_CallHook,
-             &MarkdownRefreshHook);
-}
-MakeHook(MarkdownFormattingMenuItemClickedHook,
-         MarkdownFormattingMenuItemClickedFunc);
-
 #ifdef __MORPHOS__
 HOOKPROTONHNONP(ChatLineWrapMenuItemClickedFunc, void) {
     configSetChatLineWrap(!configGetChatLineWrap());
@@ -977,9 +969,14 @@ void addMenuActions() {
         menuStrip, MUIM_FindUData, MENU_ITEM_VIEW_MARKDOWN_FORMATTING);
     set(markdownFormattingMenuItem, MUIA_Menuitem_Checked,
         configGetMarkdownFormatting());
+    /* Set config from Checked (not !toggle) — same pattern as alignment menus.
+     * Avoids desync if notify fires more than once; refresh is separate. */
+    DoMethod(markdownFormattingMenuItem, MUIM_Notify, MUIA_Menuitem_Checked,
+             MUIV_EveryTime, configObj, 3, MUIM_Set,
+             MUIA_AmigaGPTConfig_MarkdownFormatting, MUIV_TriggerValue);
     DoMethod(markdownFormattingMenuItem, MUIM_Notify, MUIA_Menuitem_Checked,
              MUIV_EveryTime, MUIV_Notify_Application, 2, MUIM_CallHook,
-             &MarkdownFormattingMenuItemClickedHook);
+             &MarkdownRefreshHook);
 
 #ifdef __MORPHOS__
     Object chatLineWrapMenuItem = (Object)DoMethod(

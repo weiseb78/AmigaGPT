@@ -3274,7 +3274,12 @@ static BOOL ensureChatOutputBufferCapacity(ULONG required) {
     }
     strncpy(bigger, chatOutputTextEditorContents,
             chatOutputTextEditorContentsCapacity - 1);
+#ifndef __MORPHOS__
+    /* NFloattext still holds a pointer into the old buffer; clear before
+     * FreeVec. MorphOS chat output is Scintilla — MUIA_NFloattext_Text does
+     * not apply there. */
     set(chatOutputTextEditor, MUIA_NFloattext_Text, "");
+#endif
     FreeVec(chatOutputTextEditorContents);
     chatOutputTextEditorContents = bigger;
     chatOutputTextEditorContentsCapacity = newCapacity;
