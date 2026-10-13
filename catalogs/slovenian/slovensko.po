@@ -1426,8 +1426,8 @@ msgstr "Prilagojene glave"
 
 #: src/CustomServerSettingsRequesterWindow.c
 msgctxt "STRING_MENU_TEMPLATE_XAI_GROK (274//)"
-msgid "xAI Grok"
-msgstr "xAI Grok"
+msgid "SpaceXAI Grok"
+msgstr "SpaceXAI Grok"
 
 #: src/CustomServerSettingsRequesterWindow.c
 msgctxt "STRING_PROFILES (275//)"
@@ -1506,8 +1506,8 @@ msgstr "Google Gemini"
 
 #: src/openai.c
 msgctxt "STRING_PROVIDER_GROK (291//)"
-msgid "xAI Grok"
-msgstr "xAI Grok"
+msgid "SpaceXAI Grok"
+msgstr "SpaceXAI Grok"
 
 #: src/openai.c
 msgctxt "STRING_PROVIDER_ANTHROPIC (292//)"
@@ -2238,9 +2238,183 @@ msgctxt "STRING_WAITING_FOR_MORE_DATA (428//)"
 msgid "Waiting for more response data..."
 msgstr "Waiting for more response data..."
 
-#~ msgctxt "STRING_CLEAR_ATTACHMENTS (366//)"
-#~ msgid "Clear"
-#~ msgstr "Clear"
+
+#: src/MainWindow.c
+msgctxt "STRING_EDIT_IMAGE (429//)"
+msgid "Edit..."
+msgstr "Uredi..."
+
+#: src/MainWindow.c
+msgctxt "STRING_ATTACH_REFERENCE_IMAGES (430//)"
+msgid "Attach images..."
+msgstr "Dodaj slike..."
+
+#: src/MainWindow.c
+msgctxt "STRING_CLEAR_REFERENCE_IMAGES (431//)"
+msgid "Clear"
+msgstr "Počisti"
+
+#: src/MainWindow.c
+msgctxt "STRING_NO_REFERENCE_IMAGES (432//)"
+msgid "No reference images"
+msgstr "Ni referenčnih slik"
+
+#: src/MainWindow.c
+msgctxt "STRING_REFERENCE_IMAGES_ATTACHED_FORMAT (433//)"
+msgid "%lu reference image(s)"
+msgstr "%lu referenčnih slik"
+
+#: src/MainWindow.c
+msgctxt "STRING_ERROR_NOT_AN_IMAGE (434//)"
+msgid "Only image files can be used as reference images."
+msgstr "Kot referenčne slike je mogoče uporabiti samo slikovne datoteke."
+
+#: src/MainWindow.c
+msgctxt "STRING_STOP (435//)"
+msgid "Stop"
+msgstr "Stop"
+
+#: src/MainWindow.c
+msgctxt "STRING_NEW_PHRASE (436//)"
+msgid "New Phrase"
+msgstr "Nova fraza"
+
+#: src/MainWindow.c
+msgctxt "STRING_DELETE_PHRASE (437//)"
+msgid "Delete Phrase"
+msgstr "Izbriši frazo"
+
+#: src/MainWindow.c
+msgctxt "STRING_GENERATE_SPEECH (438//)"
+msgid "Generate"
+msgstr "Generate"
+
+#: src/MainWindow.c
+msgctxt "STRING_REGENERATE (439//)"
+msgid "Regenerate"
+msgstr "Regenerate"
+
+#: src/MainWindow.c
+msgctxt "STRING_PLAY (440//)"
+msgid "Play"
+msgstr "Play"
+
+#: src/MainWindow.c
+msgctxt "STRING_SAVE_SPEECH_COPY (441//)"
+msgid "Save Speech Copy"
+msgstr "Shrani kopijo zvoka"
+
+#: src/MainWindow.c
+msgctxt "STRING_GENERATE_TEXT_WITH_AI (442//)"
+msgid "Generate text with AI"
+msgstr "Generate text with AI"
+
+#: src/MainWindow.c
+msgctxt "STRING_SPEAK_CONTENTS_OF_FILES (443//)"
+msgid "Speak contents of files"
+msgstr "Speak contents of files"
+
+#: src/MainWindow.c
+msgctxt "STRING_GENERATING_SPEECH (444//)"
+msgid "Generating speech..."
+msgstr "Ustvarjanje govora..."
+
+#: src/MainWindow.c
+msgctxt "STRING_ERROR_SPEECH_HISTORY_CREATE (445//)"
+msgid "Failed to create speech history file. Phrase history will not be saved."
+msgstr ""
+"Datoteke zgodovine govora ni bilo mogoče ustvariti. Zgodovina fraz ne bo "
+"shranjena."
+
+#: src/MainWindow.c
+msgctxt "STRING_ERROR_SPEECH_HISTORY_WRITE (446//)"
+msgid ""
+"Failed to write to speech history file. Phrase history will not be saved."
+msgstr ""
+"V datoteko zgodovine govora ni bilo mogoče pisati. Zgodovina fraz ne bo "
+"shranjena."
+
+#: src/MainWindow.c
+msgctxt "STRING_ERROR_SPEECH_HISTORY_READ (447//)"
+msgid ""
+"Failed to read from speech history file. Phrase history will not be loaded"
+msgstr ""
+"Datoteke zgodovine govora ni bilo mogoče prebrati. Zgodovina fraz ne bo "
+"naložena"
+
+#: src/MainWindow.c
+msgctxt "STRING_ERROR_SPEECH_HISTORY_PARSE_BACKUP (448//)"
+msgid ""
+"Failed to parse speech history. Malformed JSON. The speech-history.json file "
+"is probably corrupted. Phrase history will not be loaded. A backup of the "
+"speech-history.json file has been created as speech-history.json.bak"
+msgstr ""
+"Zgodovine govora ni bilo mogoče razčleniti. Neveljaven JSON. Datoteka "
+"speech-history.json je verjetno poškodovana. Zgodovina fraz ne bo naložena. "
+"Varnostna kopija datoteke speech-history.json je bila ustvarjena kot "
+"speech-history.json.bak"
+
+#: src/MainWindow.c
+msgctxt "STRING_ERROR_SPEECH_HISTORY_PARSE_BACKUP_RAM (449//)"
+msgid ""
+"Failed to parse speech history. Malformed JSON. The speech-history.json file "
+"is probably corrupted. Phrase history will not be loaded. There was an error "
+"writing a backup of the speech history to disk but a copy has been saved to "
+"RAM:speech-history.json"
+msgstr ""
+"Zgodovine govora ni bilo mogoče razčleniti. Neveljaven JSON. Datoteka "
+"speech-history.json je verjetno poškodovana. Zgodovina fraz ne bo naložena. "
+"Pri zapisovanju varnostne kopije zgodovine govora na disk je prišlo do "
+"napake, vendar je bila kopija shranjena v RAM:speech-history.json"
+
+#: src/MainWindow.c
+msgctxt "STRING_ERROR_SPEECH_HISTORY_PARSE_NO_BACKUP (450//)"
+msgid ""
+"Failed to parse speech history. The speech-history.json file is probably "
+"corrupted. Phrase history will not be loaded."
+msgstr ""
+"Zgodovine govora ni bilo mogoče razčleniti. Datoteka speech-history.json je "
+"verjetno poškodovana. Zgodovina fraz ne bo naložena."
+
+#: src/MainWindow.c
+msgctxt "STRING_REQUEST_CANCELLED (451//)"
+msgid "Request cancelled"
+msgstr "Zahteva preklicana"
+
+#: src/MainWindow.c
+msgctxt "STRING_PAUSE (452//)"
+msgid "Pause"
+msgstr "Premor"
+
+#: src/MainWindow.c
+msgctxt "STRING_REWIND (453//)"
+msgid "Rewind"
+msgstr "Previj nazaj"
+
+#: src/MainWindow.c
+msgctxt "STRING_NO_SPEECH_SELECTED (454//)"
+msgid "Select a phrase to see its speech profile and waveform."
+msgstr "Izberite frazo, da si ogledate njen govorni profil in valovno obliko."
+
+#: src/MainWindow.c
+msgctxt "STRING_SPEECH_PROFILE (455//)"
+msgid "Profile"
+msgstr "Profil"
+
+#: src/MainWindow.c
+msgctxt "STRING_SPEECH_SYSTEM_LABEL (456//)"
+msgid "System"
+msgstr "Sistem"
+
+#: src/MainWindow.c
+msgctxt "STRING_SPEECH_NO_PROFILE (457//)"
+msgid "No profile was recorded for this phrase."
+msgstr "Za to frazo ni bil zabeležen noben profil."
+
+#: src/MainWindow.c
+msgctxt "STRING_SPEECH_LANGUAGE (458//)"
+msgid "Language"
+msgstr "Jezik"
 
 #~ msgctxt "STRING_MENU_OPENAI_VOICE (133//)"
 #~ msgid "OpenAI Voice"
@@ -2249,3 +2423,4 @@ msgstr "Waiting for more response data..."
 #~ msgctxt "STRING_MENU_SPEECH_OPENAI_MODEL (140//)"
 #~ msgid "OpenAI Speech Model"
 #~ msgstr "Govorni model OpenAI"
+

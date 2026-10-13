@@ -11,7 +11,7 @@
 #endif
 #endif
 
-#define STREAMLOG_LINE_MAX 512
+#define STREAMLOG_LINE_MAX 640
 
 #ifdef DAEMON
 

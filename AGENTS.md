@@ -14,6 +14,8 @@ This repository is **weiseb78/AmigaGPT** — a fork of [sacredbanana/AmigaGPT](h
 - For `amiga-sdk-docs`, sync and search the local cache at `.agents/skills/amiga-sdk-docs/cache/amigasdk-gcc` (via `./.agents/skills/amiga-sdk-docs/scripts/sync-repo.sh`) before broader web search.
 - For `amiga-sdk-docs`, wait for the sync script to finish successfully or fail before any fallback to GitHub pages or broader web search.
 - Building AmigaGPT itself on Amiga targets: use the `build-amigagpt` skill — only the three `build_*.sh` scripts work in that environment. **MorphOS fork (WSL):** use `bash ship-morphos.sh` / `make -f Makefile.MorphOS ship` (see Build & test loop below).
+- **Public MUI classes (upstream 3.4):** prompt editor and speech waveform are `ActionTextEditor.mcc` / `AudioPlayer.mcc` (bundled under `bundle/AmigaGPT/MCC/`, installed to `SYS:Classes/MUI` on MorphOS). Headers: `<mui/ActionTextEditor_mcc.h>`, `<mui/AudioPlayer_mcc.h>`.
+
 - Before calling an MCP tool, read the installed tool descriptor and follow its schema exactly.
 - For documentation answers, prefer MCP-backed official docs over general web search.
 - If MCP is unavailable, fall back only to official provider docs pages:

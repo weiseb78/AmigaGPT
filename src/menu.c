@@ -215,7 +215,11 @@ static Object *getActiveTextEditor() {
     }
 
     get(modeRegisterGroup, MUIA_Group_ActivePage, &activePage);
-    return (activePage == 0) ? chatInputTextEditor : imageInputTextEditor;
+    if (activePage == 0)
+        return chatInputTextEditor;
+    if (activePage == 1)
+        return imageInputTextEditor;
+    return speechInputTextEditor;
 }
 
 /**
@@ -268,7 +272,8 @@ void updateEditMenuItemsEnabled() {
     }
 
     focusedInputTextEditor = (activeObject == chatInputTextEditor ||
-                              activeObject == imageInputTextEditor)
+                              activeObject == imageInputTextEditor ||
+                              activeObject == speechInputTextEditor)
                                  ? activeObject
                                  : NULL;
     applyEditMenuItemsEnabled();
@@ -452,14 +457,6 @@ HOOKPROTONHNONP(MarkdownRefreshFunc, void) {
 #endif
 }
 MakeHook(MarkdownRefreshHook, MarkdownRefreshFunc);
-
-HOOKPROTONHNONP(MarkdownFormattingMenuItemClickedFunc, void) {
-    configSetMarkdownFormatting(!configGetMarkdownFormatting());
-    DoMethod(app, MUIM_Application_PushMethod, app, 2, MUIM_CallHook,
-             &MarkdownRefreshHook);
-}
-MakeHook(MarkdownFormattingMenuItemClickedHook,
-         MarkdownFormattingMenuItemClickedFunc);
 
 #ifdef __MORPHOS__
 HOOKPROTONHNONP(ChatLineWrapMenuItemClickedFunc, void) {
@@ -972,9 +969,14 @@ void addMenuActions() {
         menuStrip, MUIM_FindUData, MENU_ITEM_VIEW_MARKDOWN_FORMATTING);
     set(markdownFormattingMenuItem, MUIA_Menuitem_Checked,
         configGetMarkdownFormatting());
+    /* Set config from Checked (not !toggle) — same pattern as alignment menus.
+     * Avoids desync if notify fires more than once; refresh is separate. */
+    DoMethod(markdownFormattingMenuItem, MUIM_Notify, MUIA_Menuitem_Checked,
+             MUIV_EveryTime, configObj, 3, MUIM_Set,
+             MUIA_AmigaGPTConfig_MarkdownFormatting, MUIV_TriggerValue);
     DoMethod(markdownFormattingMenuItem, MUIM_Notify, MUIA_Menuitem_Checked,
              MUIV_EveryTime, MUIV_Notify_Application, 2, MUIM_CallHook,
-             &MarkdownFormattingMenuItemClickedHook);
+             &MarkdownRefreshHook);
 
 #ifdef __MORPHOS__
     Object chatLineWrapMenuItem = (Object)DoMethod(
@@ -1181,7 +1183,7 @@ static void populateArexxMenu() {
 
     // Scan the rexx directory for .rexx files
 #if defined(__AMIGAOS3__) || defined(__MORPHOS__)
-    BPTR lock = Lock("AMIGAGPT:rexx", ACCESS_READ);
+    BPTR lock = Lock("AMIGAGPT:rexx", SHARED_LOCK);
     if (lock != 0) {
         struct FileInfoBlock *fib = AllocDosObject(DOS_FIB, NULL);
         if (fib != NULL) {
@@ -1297,7 +1299,7 @@ static BPTR BuildNPPath(const char *const *extraDirs, BOOL addParent) {
     for (size_t i = 0; i < extraCount; ++i) {
         if (!extraDirs[i] || !extraDirs[i][0])
             continue;
-        BPTR lock = Lock((STRPTR)extraDirs[i], ACCESS_READ);
+        BPTR lock = Lock((STRPTR)extraDirs[i], SHARED_LOCK);
         if (!lock)
             continue;
 

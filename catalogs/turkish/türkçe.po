@@ -1412,8 +1412,8 @@ msgstr "Özel başlıklar"
 
 #: src/CustomServerSettingsRequesterWindow.c
 msgctxt "STRING_MENU_TEMPLATE_XAI_GROK (274//)"
-msgid "xAI Grok"
-msgstr "xAI Grok"
+msgid "SpaceXAI Grok"
+msgstr "SpaceXAI Grok"
 
 #: src/CustomServerSettingsRequesterWindow.c
 msgctxt "STRING_PROFILES (275//)"
@@ -1492,8 +1492,8 @@ msgstr "Google Gemini"
 
 #: src/openai.c
 msgctxt "STRING_PROVIDER_GROK (291//)"
-msgid "xAI Grok"
-msgstr "xAI Grok"
+msgid "SpaceXAI Grok"
+msgstr "SpaceXAI Grok"
 
 #: src/openai.c
 msgctxt "STRING_PROVIDER_ANTHROPIC (292//)"
@@ -2225,9 +2225,176 @@ msgctxt "STRING_WAITING_FOR_MORE_DATA (428//)"
 msgid "Waiting for more response data..."
 msgstr "Waiting for more response data..."
 
-#~ msgctxt "STRING_CLEAR_ATTACHMENTS (366//)"
-#~ msgid "Clear"
-#~ msgstr "Clear"
+
+#: src/MainWindow.c
+msgctxt "STRING_EDIT_IMAGE (429//)"
+msgid "Edit..."
+msgstr "Düzenle..."
+
+#: src/MainWindow.c
+msgctxt "STRING_ATTACH_REFERENCE_IMAGES (430//)"
+msgid "Attach images..."
+msgstr "Resim ekle..."
+
+#: src/MainWindow.c
+msgctxt "STRING_CLEAR_REFERENCE_IMAGES (431//)"
+msgid "Clear"
+msgstr "Temizle"
+
+#: src/MainWindow.c
+msgctxt "STRING_NO_REFERENCE_IMAGES (432//)"
+msgid "No reference images"
+msgstr "Referans resmi yok"
+
+#: src/MainWindow.c
+msgctxt "STRING_REFERENCE_IMAGES_ATTACHED_FORMAT (433//)"
+msgid "%lu reference image(s)"
+msgstr "%lu referans resmi"
+
+#: src/MainWindow.c
+msgctxt "STRING_ERROR_NOT_AN_IMAGE (434//)"
+msgid "Only image files can be used as reference images."
+msgstr "Referans resmi olarak yalnızca resim dosyaları kullanılabilir."
+
+#: src/MainWindow.c
+msgctxt "STRING_STOP (435//)"
+msgid "Stop"
+msgstr "Stop"
+
+#: src/MainWindow.c
+msgctxt "STRING_NEW_PHRASE (436//)"
+msgid "New Phrase"
+msgstr "Yeni ifade"
+
+#: src/MainWindow.c
+msgctxt "STRING_DELETE_PHRASE (437//)"
+msgid "Delete Phrase"
+msgstr "İfadeyi sil"
+
+#: src/MainWindow.c
+msgctxt "STRING_GENERATE_SPEECH (438//)"
+msgid "Generate"
+msgstr "Generate"
+
+#: src/MainWindow.c
+msgctxt "STRING_REGENERATE (439//)"
+msgid "Regenerate"
+msgstr "Regenerate"
+
+#: src/MainWindow.c
+msgctxt "STRING_PLAY (440//)"
+msgid "Play"
+msgstr "Play"
+
+#: src/MainWindow.c
+msgctxt "STRING_SAVE_SPEECH_COPY (441//)"
+msgid "Save Speech Copy"
+msgstr "Ses kopyasını kaydet"
+
+#: src/MainWindow.c
+msgctxt "STRING_GENERATE_TEXT_WITH_AI (442//)"
+msgid "Generate text with AI"
+msgstr "Generate text with AI"
+
+#: src/MainWindow.c
+msgctxt "STRING_SPEAK_CONTENTS_OF_FILES (443//)"
+msgid "Speak contents of files"
+msgstr "Speak contents of files"
+
+#: src/MainWindow.c
+msgctxt "STRING_GENERATING_SPEECH (444//)"
+msgid "Generating speech..."
+msgstr "Konuşma oluşturuluyor..."
+
+#: src/MainWindow.c
+msgctxt "STRING_ERROR_SPEECH_HISTORY_CREATE (445//)"
+msgid "Failed to create speech history file. Phrase history will not be saved."
+msgstr "Konuşma geçmişi dosyası oluşturulamadı. İfade geçmişi kaydedilmeyecek."
+
+#: src/MainWindow.c
+msgctxt "STRING_ERROR_SPEECH_HISTORY_WRITE (446//)"
+msgid ""
+"Failed to write to speech history file. Phrase history will not be saved."
+msgstr "Konuşma geçmişi dosyasına yazılamadı. İfade geçmişi kaydedilmeyecek."
+
+#: src/MainWindow.c
+msgctxt "STRING_ERROR_SPEECH_HISTORY_READ (447//)"
+msgid ""
+"Failed to read from speech history file. Phrase history will not be loaded"
+msgstr "Konuşma geçmişi dosyası okunamadı. İfade geçmişi yüklenmeyecek"
+
+#: src/MainWindow.c
+msgctxt "STRING_ERROR_SPEECH_HISTORY_PARSE_BACKUP (448//)"
+msgid ""
+"Failed to parse speech history. Malformed JSON. The speech-history.json file "
+"is probably corrupted. Phrase history will not be loaded. A backup of the "
+"speech-history.json file has been created as speech-history.json.bak"
+msgstr ""
+"Konuşma geçmişi çözümlenemedi. Bozuk JSON. speech-history.json dosyası "
+"muhtemelen bozulmuş. İfade geçmişi yüklenmeyecek. speech-history.json "
+"dosyasının yedeği speech-history.json.bak olarak oluşturuldu"
+
+#: src/MainWindow.c
+msgctxt "STRING_ERROR_SPEECH_HISTORY_PARSE_BACKUP_RAM (449//)"
+msgid ""
+"Failed to parse speech history. Malformed JSON. The speech-history.json file "
+"is probably corrupted. Phrase history will not be loaded. There was an error "
+"writing a backup of the speech history to disk but a copy has been saved to "
+"RAM:speech-history.json"
+msgstr ""
+"Konuşma geçmişi çözümlenemedi. Bozuk JSON. speech-history.json dosyası "
+"muhtemelen bozulmuş. İfade geçmişi yüklenmeyecek. Konuşma geçmişinin yedeği "
+"diske yazılırken bir hata oluştu, ancak bir kopya RAM:speech-history.json "
+"içine kaydedildi"
+
+#: src/MainWindow.c
+msgctxt "STRING_ERROR_SPEECH_HISTORY_PARSE_NO_BACKUP (450//)"
+msgid ""
+"Failed to parse speech history. The speech-history.json file is probably "
+"corrupted. Phrase history will not be loaded."
+msgstr ""
+"Konuşma geçmişi çözümlenemedi. speech-history.json dosyası muhtemelen "
+"bozulmuş. İfade geçmişi yüklenmeyecek."
+
+#: src/MainWindow.c
+msgctxt "STRING_REQUEST_CANCELLED (451//)"
+msgid "Request cancelled"
+msgstr "İstek iptal edildi"
+
+#: src/MainWindow.c
+msgctxt "STRING_PAUSE (452//)"
+msgid "Pause"
+msgstr "Duraklat"
+
+#: src/MainWindow.c
+msgctxt "STRING_REWIND (453//)"
+msgid "Rewind"
+msgstr "Geri sar"
+
+#: src/MainWindow.c
+msgctxt "STRING_NO_SPEECH_SELECTED (454//)"
+msgid "Select a phrase to see its speech profile and waveform."
+msgstr "Konuşma profilini ve dalga biçimini görmek için bir ifade seçin."
+
+#: src/MainWindow.c
+msgctxt "STRING_SPEECH_PROFILE (455//)"
+msgid "Profile"
+msgstr "Profil"
+
+#: src/MainWindow.c
+msgctxt "STRING_SPEECH_SYSTEM_LABEL (456//)"
+msgid "System"
+msgstr "Sistem"
+
+#: src/MainWindow.c
+msgctxt "STRING_SPEECH_NO_PROFILE (457//)"
+msgid "No profile was recorded for this phrase."
+msgstr "Bu ifade için herhangi bir profil kaydedilmedi."
+
+#: src/MainWindow.c
+msgctxt "STRING_SPEECH_LANGUAGE (458//)"
+msgid "Language"
+msgstr "Dil"
 
 #~ msgctxt "STRING_MENU_OPENAI_VOICE (133//)"
 #~ msgid "OpenAI Voice"
@@ -2236,3 +2403,4 @@ msgstr "Waiting for more response data..."
 #~ msgctxt "STRING_MENU_SPEECH_OPENAI_MODEL (140//)"
 #~ msgid "OpenAI Speech Model"
 #~ msgstr "OpenAI Konuşma Modeli"
+

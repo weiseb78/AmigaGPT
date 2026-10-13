@@ -60,6 +60,18 @@ elif [[ -d "$OUT_DIR/rexx" ]]; then
   cp -a "$OUT_DIR/rexx" "$OUT_DIR/devs" "$STAGE/AmigaGPT/AmigaGPT/"
 fi
 
+# Public MCCs (installer copies to SYS:Classes/MUI). Cross LHA ships MorphOS builds
+# under AmigaGPT/MCC/ so HW tests can install without a full Installer run.
+mkdir -p "$STAGE/AmigaGPT/AmigaGPT/MCC"
+if [[ -f "$ROOT/bundle/AmigaGPT/MCC/ActionTextEditor_MorphOS.mcc" ]]; then
+  cp -f "$ROOT/bundle/AmigaGPT/MCC/ActionTextEditor_MorphOS.mcc" \
+    "$STAGE/AmigaGPT/AmigaGPT/MCC/ActionTextEditor.mcc"
+fi
+if [[ -f "$ROOT/bundle/AmigaGPT/MCC/AudioPlayer_MorphOS.mcc" ]]; then
+  cp -f "$ROOT/bundle/AmigaGPT/MCC/AudioPlayer_MorphOS.mcc" \
+    "$STAGE/AmigaGPT/AmigaGPT/MCC/AudioPlayer.mcc"
+fi
+
 for cat in "$CATALOGS_DIR"/*/*.catalog; do
   [[ -f "$cat" ]] || continue
   lang=$(basename "$(dirname "$cat")")

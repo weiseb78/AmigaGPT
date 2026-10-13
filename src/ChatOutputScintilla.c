@@ -853,15 +853,6 @@ static BOOL chatMdFindCodeblockPlaceholderOnLine(const char *text, ULONG len,
     return FALSE;
 }
 
-static BOOL chatMdInSkippedRegion(const char *text, ULONG len, ULONG pos) {
-    ULONG lineStart = pos;
-
-    while (lineStart > 0 && text[lineStart - 1] != '\n') {
-        lineStart--;
-    }
-    return chatMdFindCodeblockPlaceholderOnLine(text, len, lineStart, NULL);
-}
-
 static UBYTE chatMdHeadingLevel(const char *text, ULONG len, ULONG lineStart) {
     ULONG h = lineStart;
     ULONG hashes = 0;
@@ -1091,20 +1082,48 @@ ULONG chatOutputScintillaBuildMidiMarkdownDisplay(const char *inUtf8,
     chatMdInitStack(&styleStack);
 
     /*
-     * Heading detection used to rescan to line start for every byte when
-     * stripMidi is on — O(n²) on long single lines (huge assistant payloads),
-     * which freezes the UI when switching chats. Refresh line bounds only at
-     * each physical line start.
+     * Heading + codeblock-line detection used to rescan to line start for
+     * every byte (chatMdInSkippedRegion / heading) — O(n²) on long lines or
+     * multi-KB chats, which freezes MorphOS on Markdown toggle / chat switch.
+     * Refresh line bounds only at each physical line start.
      */
     ULONG mdLineStart = 0;
     ULONG mdLineEnd = 0;
     ULONG mdContentStart = 0;
     UBYTE mdHeadingLevel = 0;
+    BOOL mdLineSkipped = FALSE;
 
     for (i = 0; i < inLen; i++) {
         ULONG linkEat;
         UBYTE role =
             (inRoleStyles != NULL) ? inRoleStyles[i] : CHAT_OUTPUT_STYLE_ASSISTANT;
+
+        /* Keep the MUI event loop alive on large rebuilds (Markdown menu). */
+        if (app != NULL && i > 0 && (i & 0x3FFFUL) == 0UL &&
+            !mainWindowIsShuttingDown()) {
+            (void)DoMethod(app, MUIM_Application_CheckRefresh);
+        }
+
+        if (i == 0 || inUtf8[i - 1] == '\n') {
+            mdLineStart = i;
+            mdLineEnd = i;
+            while (mdLineEnd < inLen && inUtf8[mdLineEnd] != '\n') {
+                mdLineEnd++;
+            }
+            mdLineSkipped =
+                chatMdFindCodeblockPlaceholderOnLine(inUtf8, inLen, mdLineStart,
+                                                     NULL);
+            if (stripMidi) {
+                mdHeadingLevel = chatMdHeadingLevel(inUtf8, inLen, mdLineStart);
+                mdContentStart = (mdHeadingLevel > 0)
+                                     ? chatMdHeadingContentStart(inUtf8, inLen,
+                                                                 mdLineStart)
+                                     : 0;
+            } else {
+                mdHeadingLevel = 0;
+                mdContentStart = 0;
+            }
+        }
 
         if (role == CHAT_OUTPUT_STYLE_USER) {
             linkEat = chatMdTryConsumeMarkdownHttpLinks(inUtf8, inLen, i, &outPos, outUtf8,
@@ -1116,7 +1135,7 @@ ULONG chatOutputScintillaBuildMidiMarkdownDisplay(const char *inUtf8,
             chatMdEmit(&outPos, outUtf8, outStyles, inUtf8[i], CHAT_OUTPUT_STYLE_USER);
             continue;
         }
-        if (chatMdInSkippedRegion(inUtf8, inLen, i)) {
+        if (mdLineSkipped) {
             chatMdEmit(&outPos, outUtf8, outStyles, inUtf8[i],
                        CHAT_OUTPUT_STYLE_CODEBLOCK_HOTSPOT);
             continue;
@@ -1128,18 +1147,6 @@ ULONG chatOutputScintillaBuildMidiMarkdownDisplay(const char *inUtf8,
         }
 
         if (stripMidi) {
-            if (i == 0 || inUtf8[i - 1] == '\n') {
-                mdLineStart = i;
-                mdLineEnd = i;
-                while (mdLineEnd < inLen && inUtf8[mdLineEnd] != '\n') {
-                    mdLineEnd++;
-                }
-                mdHeadingLevel = chatMdHeadingLevel(inUtf8, inLen, mdLineStart);
-                mdContentStart = (mdHeadingLevel > 0)
-                                     ? chatMdHeadingContentStart(inUtf8, inLen,
-                                                                 mdLineStart)
-                                     : 0;
-            }
             if (mdContentStart > 0) {
                 UBYTE headingStyle = chatMdHeadingScintillaStyle(mdHeadingLevel);
 

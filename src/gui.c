@@ -10,6 +10,7 @@
 #endif
 #include <libraries/mui.h>
 #include <mui/Aboutbox_mcc.h>
+#include <mui/AudioPlayer_mcc.h>
 #include <mui/BetterString_mcc.h>
 #include <mui/Busy_mcc.h>
 #include <mui/Guigfx_mcc.h>
@@ -45,6 +46,7 @@
 #include "menu.h"
 #include "MainWindow.h"
 #include "ProxySettingsRequesterWindow.h"
+#include "speech.h"
 #include "version.h"
 
 #ifdef __AMIGAOS4__
@@ -129,9 +131,9 @@ static void closeGUILibraries();
 static STRPTR wrapRequesterText(CONST_STRPTR message);
 
 static CONST_STRPTR USED_CLASSES[] = {
-    MUIC_Aboutbox,   MUIC_Busy,       MUIC_NList,
-    MUIC_NListview,  MUIC_TextEditor, MUIC_BetterString,
-    MUIC_NFloattext, MUIC_Guigfx,
+    MUIC_Aboutbox,          MUIC_Busy,           MUIC_NList,
+    MUIC_NListview,         MUIC_TextEditor,     MUIC_BetterString,
+    MUIC_NFloattext,        MUIC_Guigfx,         MUIC_AudioPlayer,
 #ifdef __MORPHOS__
     MUIC_Scintilla,
 #endif
@@ -178,6 +180,15 @@ LONG openGUILibraries() {
         return RETURN_ERROR;
     }
 #endif
+
+    struct Library *AROSBase;
+
+    if ((AROSBase = OpenLibrary("aros.library", 0))) {
+        isAROS = TRUE;
+        CloseLibrary(AROSBase);
+    } else {
+        isAROS = FALSE;
+    }
 
     isMUI5 = MUIMasterBase->lib_Version >= 21;
     isMUI39 = MUIMasterBase->lib_Version == 20;
@@ -459,6 +470,8 @@ static BOOL checkMUICustomClassInstalled() {
             continue;
         if (!isAROS && !strcmp(USED_CLASSES[i], MUIC_BetterString) != 0)
             continue;
+        if (isAROS && !strcmp(USED_CLASSES[i], MUIC_TextEditor) != 0)
+            continue;
         if (!MUI_GetClass(USED_CLASSES[i])) {
             displayError(STRING_ERROR_MUI_CUSTOM_CLASS_NOT_FOUND);
             putchar(':');
@@ -539,8 +552,23 @@ void startGUIRunLoop() {
         // processed so keep the Edit menu items in sync with it
         updateEditMenuItemsEnabled();
 #endif
-        if (running && signals)
-            signals = Wait(signals | SIGBREAKF_CTRL_C);
+#ifndef DAEMON
+        /* Every network request runs synchronously inside an input hook, so
+         * reaching the idle wait means nothing is in flight any more - stop
+         * the busy meter here rather than relying on each request path to
+         * clear it on every one of its exits. */
+        hideLoadingBar();
+        speechServicePlayback();
+        updatePlayButton();
+#endif
+        {
+            ULONG waitMask = signals;
+#ifndef DAEMON
+            waitMask |= speechPlaybackSignalMask();
+#endif
+            if (running && waitMask)
+                signals = Wait(waitMask | SIGBREAKF_CTRL_C);
+        }
         if (signals & SIGBREAKF_CTRL_C) {
             mainWindowSignalQuit();
             running = FALSE;
@@ -1069,8 +1097,8 @@ UTF8 *getMessageContentFromJson(struct json_object *json, BOOL stream,
                 return text != NULL ? (UTF8 *)json_object_get_string(text)
                                     : (UTF8 *)"";
             }
-            /* Any other typed event (e.g. response.completed) contributes no
-             * text */
+            /* Full text on done / completed is handled in MainWindow (replace
+             * partial delta accumulation). Do not append here. */
             return (UTF8 *)"";
         }
 
@@ -1153,53 +1181,60 @@ UTF8 *getMessageContentFromJson(struct json_object *json, BOOL stream,
         if (apiEndpoint == API_CHAT_ENDPOINT_RESPONSES) {
             struct json_object *outputArray =
                 json_object_object_get(json, "output");
-            struct json_object *output = NULL;
 
             if (outputArray == NULL ||
                 !json_object_is_type(outputArray, json_type_array)) {
                 return (UTF8 *)"";
             }
+            /* Concatenate every output item of type "message". After hosted
+             * tools (e.g. web_search) Luna/OpenAI may emit more than one
+             * message; taking only the first left a short title-like line
+             * and dropped the real answer. */
             int arrayLength = json_object_array_length(outputArray);
+            int messagesSeen = 0;
             for (int i = 0; i < arrayLength; i++) {
                 struct json_object *currentOutput =
                     json_object_array_get_idx(outputArray, i);
                 struct json_object *typeObj =
                     json_object_object_get(currentOutput, "type");
-                if (typeObj != NULL) {
-                    UTF8 *typeStr = json_object_get_string(typeObj);
-                    if (strcmp(typeStr, "message") == 0) {
-                        output = currentOutput;
-                        break;
-                    }
-                }
-            }
+                UTF8 *typeStr;
+                struct json_object *contentArray;
+                int cLen;
+                int c;
 
-            if (output == NULL) {
-                return (UTF8 *)"";
-            }
+                if (typeObj == NULL)
+                    continue;
+                typeStr = json_object_get_string(typeObj);
+                if (typeStr == NULL || strcmp((char *)typeStr, "message") != 0)
+                    continue;
 
-            struct json_object *contentArray =
-                json_object_object_get(output, "content");
-            if (contentArray != NULL &&
-                json_object_is_type(contentArray, json_type_array)) {
-                /* Concatenate all text blocks in the message content */
-                int cLen = json_object_array_length(contentArray);
-                for (int i = 0; i < cLen; i++) {
+                contentArray =
+                    json_object_object_get(currentOutput, "content");
+                if (contentArray == NULL ||
+                    !json_object_is_type(contentArray, json_type_array))
+                    continue;
+
+                if (messagesSeen > 0)
+                    appendNewlineToMessageScratch();
+                messagesSeen++;
+
+                cLen = json_object_array_length(contentArray);
+                for (c = 0; c < cLen; c++) {
                     struct json_object *content =
-                        json_object_array_get_idx(contentArray, i);
+                        json_object_array_get_idx(contentArray, c);
+                    struct json_object *t;
+
                     if (content == NULL ||
                         !json_object_is_type(content, json_type_object))
                         continue;
-                    struct json_object *t =
-                        json_object_object_get(content, "text");
-                    if (t != NULL) {
+                    t = json_object_object_get(content, "text");
+                    if (t != NULL)
                         appendJsonStringToMessageScratch(t, retainJSONFormat);
-                    }
                 }
-                if (messageScratch != NULL &&
-                    strlen((char *)messageScratch) > 0) {
-                    return messageScratch;
-                }
+            }
+            if (messageScratch != NULL &&
+                strlen((char *)messageScratch) > 0) {
+                return messageScratch;
             }
             return (UTF8 *)"";
         } else if (apiEndpoint == API_CHAT_ENDPOINT_MESSAGES) {
@@ -1781,6 +1816,7 @@ void shutdownGUI() {
 #ifdef __MORPHOS__
         chatOutputScintillaDisposeNotifyClass();
 #endif
+        deleteAmigaGPTTextEditor();
         mainWindowInvalidateAfterShutdown();
 #ifdef __MORPHOS__
         codeBlocksWindowObject = NULL;
@@ -1812,9 +1848,6 @@ void shutdownGUI() {
         codeBlocksViewContents = NULL;
     }
 #endif
-    if (isMUI5 || isMUI39) {
-        deleteAmigaGPTTextEditor();
-    }
 #endif
 
     closeGUILibraries();

@@ -1428,8 +1428,8 @@ msgstr "Anpassade headers"
 
 #: src/CustomServerSettingsRequesterWindow.c
 msgctxt "STRING_MENU_TEMPLATE_XAI_GROK (274//)"
-msgid "xAI Grok"
-msgstr "xAI Grok"
+msgid "SpaceXAI Grok"
+msgstr "SpaceXAI Grok"
 
 #: src/CustomServerSettingsRequesterWindow.c
 msgctxt "STRING_PROFILES (275//)"
@@ -1508,8 +1508,8 @@ msgstr "Google Gemini"
 
 #: src/openai.c
 msgctxt "STRING_PROVIDER_GROK (291//)"
-msgid "xAI Grok"
-msgstr "xAI Grok"
+msgid "SpaceXAI Grok"
+msgstr "SpaceXAI Grok"
 
 #: src/openai.c
 msgctxt "STRING_PROVIDER_ANTHROPIC (292//)"
@@ -2239,9 +2239,183 @@ msgctxt "STRING_WAITING_FOR_MORE_DATA (428//)"
 msgid "Waiting for more response data..."
 msgstr "Waiting for more response data..."
 
-#~ msgctxt "STRING_CLEAR_ATTACHMENTS (366//)"
-#~ msgid "Clear"
-#~ msgstr "Clear"
+
+#: src/MainWindow.c
+msgctxt "STRING_EDIT_IMAGE (429//)"
+msgid "Edit..."
+msgstr "Redigera..."
+
+#: src/MainWindow.c
+msgctxt "STRING_ATTACH_REFERENCE_IMAGES (430//)"
+msgid "Attach images..."
+msgstr "Bifoga bilder..."
+
+#: src/MainWindow.c
+msgctxt "STRING_CLEAR_REFERENCE_IMAGES (431//)"
+msgid "Clear"
+msgstr "Rensa"
+
+#: src/MainWindow.c
+msgctxt "STRING_NO_REFERENCE_IMAGES (432//)"
+msgid "No reference images"
+msgstr "Inga referensbilder"
+
+#: src/MainWindow.c
+msgctxt "STRING_REFERENCE_IMAGES_ATTACHED_FORMAT (433//)"
+msgid "%lu reference image(s)"
+msgstr "%lu referensbild(er)"
+
+#: src/MainWindow.c
+msgctxt "STRING_ERROR_NOT_AN_IMAGE (434//)"
+msgid "Only image files can be used as reference images."
+msgstr "Endast bildfiler kan användas som referensbilder."
+
+#: src/MainWindow.c
+msgctxt "STRING_STOP (435//)"
+msgid "Stop"
+msgstr "Stop"
+
+#: src/MainWindow.c
+msgctxt "STRING_NEW_PHRASE (436//)"
+msgid "New Phrase"
+msgstr "Ny fras"
+
+#: src/MainWindow.c
+msgctxt "STRING_DELETE_PHRASE (437//)"
+msgid "Delete Phrase"
+msgstr "Ta bort fras"
+
+#: src/MainWindow.c
+msgctxt "STRING_GENERATE_SPEECH (438//)"
+msgid "Generate"
+msgstr "Generate"
+
+#: src/MainWindow.c
+msgctxt "STRING_REGENERATE (439//)"
+msgid "Regenerate"
+msgstr "Regenerate"
+
+#: src/MainWindow.c
+msgctxt "STRING_PLAY (440//)"
+msgid "Play"
+msgstr "Play"
+
+#: src/MainWindow.c
+msgctxt "STRING_SAVE_SPEECH_COPY (441//)"
+msgid "Save Speech Copy"
+msgstr "Spara ljudkopia"
+
+#: src/MainWindow.c
+msgctxt "STRING_GENERATE_TEXT_WITH_AI (442//)"
+msgid "Generate text with AI"
+msgstr "Generate text with AI"
+
+#: src/MainWindow.c
+msgctxt "STRING_SPEAK_CONTENTS_OF_FILES (443//)"
+msgid "Speak contents of files"
+msgstr "Speak contents of files"
+
+#: src/MainWindow.c
+msgctxt "STRING_GENERATING_SPEECH (444//)"
+msgid "Generating speech..."
+msgstr "Genererar tal..."
+
+#: src/MainWindow.c
+msgctxt "STRING_ERROR_SPEECH_HISTORY_CREATE (445//)"
+msgid "Failed to create speech history file. Phrase history will not be saved."
+msgstr ""
+"Det gick inte att skapa talhistorikfilen. Frashistoriken kommer inte att "
+"sparas."
+
+#: src/MainWindow.c
+msgctxt "STRING_ERROR_SPEECH_HISTORY_WRITE (446//)"
+msgid ""
+"Failed to write to speech history file. Phrase history will not be saved."
+msgstr ""
+"Det gick inte att skriva till talhistorikfilen. Frashistoriken kommer inte "
+"att sparas."
+
+#: src/MainWindow.c
+msgctxt "STRING_ERROR_SPEECH_HISTORY_READ (447//)"
+msgid ""
+"Failed to read from speech history file. Phrase history will not be loaded"
+msgstr ""
+"Det gick inte att läsa från talhistorikfilen. Frashistoriken kommer inte "
+"att läsas in"
+
+#: src/MainWindow.c
+msgctxt "STRING_ERROR_SPEECH_HISTORY_PARSE_BACKUP (448//)"
+msgid ""
+"Failed to parse speech history. Malformed JSON. The speech-history.json file "
+"is probably corrupted. Phrase history will not be loaded. A backup of the "
+"speech-history.json file has been created as speech-history.json.bak"
+msgstr ""
+"Det gick inte att tolka talhistoriken. Felaktig JSON. Filen "
+"speech-history.json är troligen skadad. Frashistoriken kommer inte att "
+"läsas in. En säkerhetskopia av filen speech-history.json har skapats som "
+"speech-history.json.bak"
+
+#: src/MainWindow.c
+msgctxt "STRING_ERROR_SPEECH_HISTORY_PARSE_BACKUP_RAM (449//)"
+msgid ""
+"Failed to parse speech history. Malformed JSON. The speech-history.json file "
+"is probably corrupted. Phrase history will not be loaded. There was an error "
+"writing a backup of the speech history to disk but a copy has been saved to "
+"RAM:speech-history.json"
+msgstr ""
+"Det gick inte att tolka talhistoriken. Felaktig JSON. Filen "
+"speech-history.json är troligen skadad. Frashistoriken kommer inte att "
+"läsas in. Det uppstod ett fel när en säkerhetskopia av talhistoriken skulle "
+"skrivas till disk, men en kopia har sparats i RAM:speech-history.json"
+
+#: src/MainWindow.c
+msgctxt "STRING_ERROR_SPEECH_HISTORY_PARSE_NO_BACKUP (450//)"
+msgid ""
+"Failed to parse speech history. The speech-history.json file is probably "
+"corrupted. Phrase history will not be loaded."
+msgstr ""
+"Det gick inte att tolka talhistoriken. Filen speech-history.json är "
+"troligen skadad. Frashistoriken kommer inte att läsas in."
+
+#: src/MainWindow.c
+msgctxt "STRING_REQUEST_CANCELLED (451//)"
+msgid "Request cancelled"
+msgstr "Begäran avbröts"
+
+#: src/MainWindow.c
+msgctxt "STRING_PAUSE (452//)"
+msgid "Pause"
+msgstr "Paus"
+
+#: src/MainWindow.c
+msgctxt "STRING_REWIND (453//)"
+msgid "Rewind"
+msgstr "Spola tillbaka"
+
+#: src/MainWindow.c
+msgctxt "STRING_NO_SPEECH_SELECTED (454//)"
+msgid "Select a phrase to see its speech profile and waveform."
+msgstr "Välj en fras för att se dess talprofil och vågform."
+
+#: src/MainWindow.c
+msgctxt "STRING_SPEECH_PROFILE (455//)"
+msgid "Profile"
+msgstr "Profil"
+
+#: src/MainWindow.c
+msgctxt "STRING_SPEECH_SYSTEM_LABEL (456//)"
+msgid "System"
+msgstr "System"
+
+#: src/MainWindow.c
+msgctxt "STRING_SPEECH_NO_PROFILE (457//)"
+msgid "No profile was recorded for this phrase."
+msgstr "Ingen profil spelades in för den här frasen."
+
+#: src/MainWindow.c
+msgctxt "STRING_SPEECH_LANGUAGE (458//)"
+msgid "Language"
+msgstr "Språk"
 
 #~ msgctxt "STRING_MENU_OPENAI_VOICE (133//)"
 #~ msgid "OpenAI Voice"
@@ -2250,3 +2424,4 @@ msgstr "Waiting for more response data..."
 #~ msgctxt "STRING_MENU_SPEECH_OPENAI_MODEL (140//)"
 #~ msgid "OpenAI Speech Model"
 #~ msgstr "OpenAI Speech Model"
+
